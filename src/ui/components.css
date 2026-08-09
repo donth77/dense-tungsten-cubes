@@ -562,3 +562,7 @@
 .iconbtn.forklift {
   color: var(--acc);
 }
+
+.iconbtn.active {
+  color: var(--ink);
+}

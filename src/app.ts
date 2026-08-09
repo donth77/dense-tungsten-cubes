@@ -91,7 +91,13 @@ export class App implements Stepper {
     });
 
     this.bus.on('select', ({ id }) => this.#select(id));
-    this.settings.subscribe((s) => this.audio.setMuted(!s.sound));
+    this.settings.subscribe((s) => {
+      this.audio.setMuted(!s.sound);
+      if (s.engraving !== this.render.engravingEnabled) {
+        this.render.setEngravingEnabled(s.engraving);
+        this.entities.refreshMaterials();
+      }
+    });
     // The camera has to know about the UI, or a selected cube sits behind the sheet
     // (12 §3). The layout class is the single source both read.
     this.hud.layout.subscribe((s) => this.rig.setViewportOffset(s.offset.x, s.offset.y));

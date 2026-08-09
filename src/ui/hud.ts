@@ -36,6 +36,7 @@ export class Hud {
   readonly #unitsBtn: HTMLElement;
   readonly #soundBtn: HTMLElement;
   readonly #handBtn: HTMLElement;
+  readonly #engraveBtn: HTMLElement;
   #handMode: HandModeId = 'one';
   /** The forklift is an easter egg, not a feature — it stays hidden until found. */
   #forkliftUnlocked = false;
@@ -64,6 +65,13 @@ export class Hud {
       class: 'iconbtn',
       'aria-label': 'Mute',
       title: 'Sound',
+    });
+    // Engraved / plain (03 §6). Engraved is the default — it is what the real cubes
+    // look like, and it is what turns a size line-up into a periodic-table line-up.
+    this.#engraveBtn = button('⊞', () => this.settings.toggleEngraving(), {
+      class: 'iconbtn',
+      'aria-label': 'Toggle engraved face',
+      title: 'Engraved face',
     });
 
     /*
@@ -108,6 +116,7 @@ export class Hud {
           'aria-label': 'Reset view',
           title: 'Reset view',
         }),
+        this.#engraveBtn,
         this.#handBtn,
         this.#unitsBtn,
         this.#soundBtn,
@@ -125,6 +134,9 @@ export class Hud {
       setText(this.#soundBtn, s.sound ? '♪' : '✕');
       this.#soundBtn.setAttribute('aria-pressed', String(!s.sound));
       this.#soundBtn.setAttribute('aria-label', s.sound ? 'Mute' : 'Unmute');
+      this.#engraveBtn.setAttribute('aria-pressed', String(s.engraving));
+      this.#engraveBtn.setAttribute('title', s.engraving ? 'Engraved face' : 'Plain face');
+      this.#engraveBtn.classList.toggle('active', s.engraving);
     });
 
     // Keep the info card clear of the sheet in portrait: the sheet's height is content-

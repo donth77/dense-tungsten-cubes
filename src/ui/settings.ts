@@ -10,6 +10,8 @@ import type { Units } from '../data/format.ts';
 export interface Settings {
   units: Units;
   sound: boolean;
+  /** The engraved periodic-table face (03 §6: "Engraved (default) / Plain"). */
+  engraving: boolean;
 }
 
 const KEY = 'dense.settings.v1';
@@ -20,6 +22,9 @@ const DEFAULTS: Settings = {
   // 08 §2.2 / roadmap Q3: on by default, with a visible mute. The thud is half the toy,
   // and a muted-by-default build fails its own pillar on the first drop.
   sound: true,
+  // 03 §6 makes Engraved the default: it is what the real product looks like, and a
+  // feature nobody sees by default is a feature nobody sees.
+  engraving: true,
 };
 
 type Listener = (s: Readonly<Settings>) => void;
@@ -55,6 +60,12 @@ export class SettingsStore {
   toggleSound(): void {
     this.set('sound', !this.#state.sound);
   }
+  toggleEngraving(): void {
+    this.set('engraving', !this.#state.engraving);
+  }
+  get engraving(): boolean {
+    return this.#state.engraving;
+  }
 
   /** @returns an unsubscribe. Called immediately so a new label renders itself once. */
   subscribe(fn: Listener): () => void {
@@ -76,6 +87,7 @@ function readStored(): Partial<Settings> {
     // would render as "undefined kg" in every label at once.
     if (rec['units'] === 'si' || rec['units'] === 'imperial') out.units = rec['units'];
     if (typeof rec['sound'] === 'boolean') out.sound = rec['sound'];
+    if (typeof rec['engraving'] === 'boolean') out.engraving = rec['engraving'];
     return out;
   } catch {
     // Private-mode Safari throws on localStorage access rather than returning null.

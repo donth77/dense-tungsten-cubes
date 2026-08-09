@@ -70,7 +70,7 @@ export class EntityStore {
 
     const mesh = new THREE.Mesh(
       this.render.cubeGeometry(spec.sideM),
-      this.render.metalMaterial(spec.metal),
+      this.render.cubeMaterial(spec.metal, spec.sideM, spec.purityPctW),
     );
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -123,6 +123,8 @@ export class EntityStore {
     e.spec = { ...e.spec, purityPctW };
     this.physics.setDensity(e.body, densityKgM3);
     e.massKg = this.physics.massOf(e.body);
+    // The engraved face carries the ASTM grade, so it changes with the slider too.
+    e.mesh.material = this.render.cubeMaterial(e.spec.metal, e.spec.sideM, purityPctW);
   }
 
   #enforceCap(): void {
@@ -182,6 +184,13 @@ export class EntityStore {
       mat.opacity = 0.55 * fade;
       e.blob.visible = fade > 0.01;
       e.blob.scale.setScalar(side * (1.3 + lift * 1.5));
+    }
+  }
+
+  /** Re-skins every live cube — used when the engraving toggle flips. */
+  refreshMaterials(): void {
+    for (const e of this.#map.values()) {
+      e.mesh.material = this.render.cubeMaterial(e.spec.metal, e.spec.sideM, e.spec.purityPctW);
     }
   }
 

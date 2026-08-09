@@ -13,6 +13,10 @@ export interface MetalSpec {
   id: MetalId;
   label: string;
   symbol: string;
+  /** Periodic-table data for the engraved face (02 §11). */
+  atomicNumber: number;
+  /** Standard atomic weight. */
+  atomicMass: number;
   /**
    * kg/m³. Undefined for tungsten, whose density is a function of purity —
    * use `densityOf()` rather than reading this directly.
@@ -90,6 +94,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     id: 'W',
     label: 'Tungsten',
     symbol: 'W',
+    atomicNumber: 74,
+    atomicMass: 183.84,
     // Density comes from whaDensity(purity); no fixed value.
     // NOTE: this is a *tuned* value for sintered W-Ni-Fe heavy alloy, not pure tungsten —
     // WHA reads as a dark warm grey (01 art direction). Re-verify against a real cube.
@@ -103,6 +109,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     id: 'Cu',
     label: 'Copper',
     symbol: 'Cu',
+    atomicNumber: 29,
+    atomicMass: 63.546,
     densityKgM3: 8960,
     baseColorLinear: [0.955, 0.638, 0.538],
     roughness: 0.25,
@@ -114,6 +122,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     id: 'Fe',
     label: 'Iron',
     symbol: 'Fe',
+    atomicNumber: 26,
+    atomicMass: 55.845,
     densityKgM3: 7870,
     baseColorLinear: [0.56, 0.57, 0.58],
     roughness: 0.25,
@@ -125,6 +135,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     id: 'Ti',
     label: 'Titanium',
     symbol: 'Ti',
+    atomicNumber: 22,
+    atomicMass: 47.867,
     densityKgM3: 4510,
     baseColorLinear: [0.542, 0.497, 0.449],
     roughness: 0.25,
@@ -136,6 +148,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     id: 'Al',
     label: 'Aluminum',
     symbol: 'Al',
+    atomicNumber: 13,
+    atomicMass: 26.982,
     densityKgM3: 2700,
     baseColorLinear: [0.912, 0.914, 0.92],
     roughness: 0.25,

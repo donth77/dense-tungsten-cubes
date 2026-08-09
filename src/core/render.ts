@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { config } from '../config.ts';
-import { METALS } from '../data/metals.ts';
+import { astmClassLabel, METALS } from '../data/metals.ts';
+import { makeEngraving } from './engraving.ts';
+import type { EngravedMaps } from './engraving.ts';
 import { SURFACES } from '../data/surfaces.ts';
 import type { MetalId, SurfaceId } from '../types.ts';
 
@@ -24,6 +26,12 @@ function linearColor([r, g, b]: readonly [number, number, number]): THREE.Color 
  * 3× DPR phone should not render 4× the pixels of a 1.5× one for no visible gain
  * at arm's length (12 §5).
  */
+/**
+ * Below this the engraved lettering is sub-pixel at any camera distance we allow.
+ * 0.25" cubes get the plain material — cheaper, and it looks better than mush.
+ */
+const ENGRAVING_MIN_SIDE_M = 0.9 * 0.0254;
+
 export function isPhoneClass(): boolean {
   const coarse = window.matchMedia('(pointer: coarse)').matches;
   const small = Math.min(window.innerWidth, window.innerHeight) <= 600;
@@ -39,6 +47,10 @@ export class RenderWorld {
   readonly #geometryCache = new Map<number, THREE.BufferGeometry>();
   readonly #geometryRefs = new Map<number, number>();
   readonly #materialCache = new Map<MetalId, THREE.MeshStandardMaterial>();
+  /** Engraved variants, keyed by metal AND grade — tungsten's line tracks purity. */
+  readonly #engravedCache = new Map<string, THREE.MeshStandardMaterial>();
+  readonly #engravedMaps = new Map<string, EngravedMaps>();
+  #engravingEnabled = true;
   #blobTexture: THREE.Texture | null = null;
   #resolutionScale = 1;
   #disposers: (() => void)[] = [];
@@ -224,6 +236,49 @@ export class RenderWorld {
     return mat;
   }
 
+  setEngravingEnabled(on: boolean): void {
+    this.#engravingEnabled = on;
+  }
+  get engravingEnabled(): boolean {
+    return this.#engravingEnabled;
+  }
+
+  /**
+   * The material a cube should actually use: engraved when the setting is on and the
+   * cube is big enough to read, plain otherwise.
+   *
+   * Below ~1" the lettering is sub-pixel at any camera distance we allow, so it costs a
+   * texture fetch to render mush. Falling back to the plain material there is both
+   * cheaper and better-looking.
+   */
+  cubeMaterial(metal: MetalId, sideM: number, purityPctW?: number): THREE.MeshStandardMaterial {
+    if (!this.#engravingEnabled || sideM < ENGRAVING_MIN_SIDE_M) return this.metalMaterial(metal);
+
+    // Tungsten carries "ASTM B777 CL n", which moves with the purity slider (02 §11) —
+    // so the grade is part of the cache key, not just the metal.
+    const grade = metal === 'W' ? astmClassLabel(purityPctW ?? 95) : '';
+    const key = `${metal}|${grade}`;
+    let mat = this.#engravedCache.get(key);
+    if (mat) return mat;
+
+    const spec = METALS[metal];
+    const maps = makeEngraving({
+      metal,
+      ...(metal === 'W' ? { astmLine: `ASTM B777 ${grade.replace('Class', 'CL')}` } : {}),
+    });
+    mat = new THREE.MeshStandardMaterial({
+      color: linearColor(spec.baseColorLinear),
+      metalness: 1.0,
+      roughness: spec.roughness,
+      normalMap: maps.normalMap,
+      roughnessMap: maps.roughnessMap,
+    });
+    mat.normalScale.set(1, 1);
+    this.#engravedMaps.set(key, maps);
+    this.#engravedCache.set(key, mat);
+    return mat;
+  }
+
   surfaceMaterial(surface: SurfaceId): THREE.MeshStandardMaterial {
     const s = SURFACES[surface];
     return new THREE.MeshStandardMaterial({
@@ -300,6 +355,10 @@ export class RenderWorld {
     this.#disposers = [];
     for (const g of this.#geometryCache.values()) g.dispose();
     for (const m of this.#materialCache.values()) m.dispose();
+    for (const m of this.#engravedCache.values()) m.dispose();
+    for (const m of this.#engravedMaps.values()) m.dispose();
+    this.#engravedCache.clear();
+    this.#engravedMaps.clear();
     this.#geometryCache.clear();
     this.#materialCache.clear();
     this.#blobTexture?.dispose();
