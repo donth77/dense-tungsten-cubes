@@ -1,0 +1,14 @@
+# Tooling scratch
+.playwright-mcp/
+.DS_Store
+
+# Raw asset staging: multi-MB marketplace downloads, zips and stalled .crdownload files.
+# Prepped, scaled, budget-checked outputs are committed under public/models/ instead (09 §7).
+assets-lib/
+
+# Build output
+node_modules/
+dist/
+
+# docs/ is intentionally TRACKED — it is the entire project right now (11 design docs,
+# the interactive dossier, and the asset attribution log). Un-ignored 2026-08-09.
