@@ -12,9 +12,14 @@ export const config = {
     DT: 1 / 60,
     /** Guards the tab-return spiral: never simulate more than a quarter-second of catch-up. */
     accumulatorClampS: 0.25,
-    /** Above this speed a body gets 4 physics substeps (tunneling insurance). */
-    substepSpeedMps: 8,
-    substepFactor: 4,
+    /**
+     * Substepping is SIZE-AWARE, not speed-thresholded (see PhysicsWorld#substepsFor).
+     * `substepSpeedMps` is only a cheap early-out so a slow scene skips the check.
+     */
+    substepSpeedMps: 1.5,
+    /** Max distance a body may travel per substep, as a fraction of its half-extent. */
+    substepTravelFraction: 0.6,
+    maxSubsteps: 12,
   },
 
   hand: {
@@ -161,6 +166,9 @@ export const config = {
     slowFrameCount: 30,
     resolutionScaleStep: 0.85,
     resolutionScaleFloor: 0.6,
+    /** Recovery needs a long clean run — ~4 s at 60 fps. Scaling up causes the next
+     *  slow frame, so an eager recovery just oscillates between two resolutions. */
+    recoverAfterFrames: 240,
     shadowMapDesktop: 2048,
     shadowMapPhone: 1024,
   },

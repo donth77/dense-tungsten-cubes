@@ -170,6 +170,9 @@ const METAL_VOICE: Record<MetalId, VoiceId> = {
 /** Which metal "wins" a cube-on-cube collision — the harder hitter speaks (08 §8.7). */
 const METAL_HARDNESS: Record<MetalId, number> = { W: 5, Fe: 4, Ti: 3, Cu: 2, Al: 1 };
 
+/** The first sound anyone hears is a cube landing on concrete. Everything else waits. */
+const WARM_VOICES: readonly VoiceId[] = ['thud_deep', 'crack_concrete'];
+
 export class AudioBus {
   #ctx: AudioContext | null = null;
   #master: GainNode | null = null;
@@ -202,10 +205,19 @@ export class AudioBus {
       this.#ctx = ctx;
       this.#master = master;
 
-      for (const id of Object.keys(RECIPES) as VoiceId[]) {
-        this.#buffers.set(id, renderVoice(ctx, RECIPES[id]));
-      }
+      /*
+       * Render the voices we are about to need, and defer the rest.
+       *
+       * Rendering all eleven synchronously here measured 61.7 ms on desktop — and this
+       * runs inside the first pointerdown, i.e. a visible freeze at the exact moment
+       * someone first touches the toy, on a phone likely several times worse. The first
+       * thing anyone hears is a cube hitting concrete, so warm those two and let the
+       * others render on first use (a few ms each, spread out) with an idle pass
+       * mopping up whatever is left.
+       */
+      for (const id of WARM_VOICES) this.#buffers.set(id, renderVoice(ctx, RECIPES[id]));
       await ctx.resume();
+      this.#renderRemainingWhenIdle();
       document.addEventListener('visibilitychange', this.#onVisibility);
     } finally {
       this.#unlocking = false;
@@ -254,9 +266,38 @@ export class AudioBus {
     }
   };
 
+  /** Lazily renders a voice the first time it is actually heard. */
+  #bufferFor(voice: VoiceId): AudioBuffer | undefined {
+    const ctx = this.#ctx;
+    if (!ctx) return undefined;
+    let buf = this.#buffers.get(voice);
+    if (!buf) {
+      buf = renderVoice(ctx, RECIPES[voice]);
+      this.#buffers.set(voice, buf);
+    }
+    return buf;
+  }
+
+  /** Fills in the un-warmed voices during idle time, one per callback. */
+  #renderRemainingWhenIdle(): void {
+    const pending = (Object.keys(RECIPES) as VoiceId[]).filter((id) => !this.#buffers.has(id));
+    if (pending.length === 0 || !this.#ctx) return;
+    const schedule =
+      typeof requestIdleCallback === 'function'
+        ? requestIdleCallback
+        : (fn: () => void) => setTimeout(fn, 32);
+    const next = (): void => {
+      const id = pending.shift();
+      if (!id || !this.#ctx) return;
+      this.#bufferFor(id);
+      if (pending.length) schedule(next);
+    };
+    schedule(next);
+  }
+
   #play(voice: VoiceId, gain: number, rate: number): void {
     const ctx = this.#ctx!;
-    const buf = this.#buffers.get(voice);
+    const buf = this.#bufferFor(voice);
     if (!buf) return;
 
     const list = this.#live.get(voice) ?? [];

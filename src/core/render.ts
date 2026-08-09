@@ -37,6 +37,7 @@ export class RenderWorld {
 
   readonly #phone = isPhoneClass();
   readonly #geometryCache = new Map<number, THREE.BufferGeometry>();
+  readonly #geometryRefs = new Map<number, number>();
   readonly #materialCache = new Map<MetalId, THREE.MeshStandardMaterial>();
   #blobTexture: THREE.Texture | null = null;
   #resolutionScale = 1;
@@ -172,15 +173,41 @@ export class RenderWorld {
    * edge the real product has, and the thing that makes a render read as metal stock
    * rather than a programmer's cube.
    */
+  /**
+   * Acquire the shared geometry for a cube of this size. **Every call must be paired
+   * with `releaseCubeGeometry(sideM)`** — see below.
+   *
+   * Quantised to 0.1 mm, which is finer than anything visible at any camera distance we
+   * allow. The original 0.01 mm key allowed 37,465 distinct geometries across the
+   * 0.25–15" slider range and nothing ever evicted them, so one slow drag of the size
+   * slider would mint hundreds of RoundedBoxGeometry and leak every one.
+   *
+   * Refcounted rather than LRU-evicted: a geometry is shared by every cube of that size,
+   * and disposing one that a live mesh still references leaves an un-renderable mesh.
+   * Recency tells you nothing about whether something is still on screen.
+   */
   cubeGeometry(sideM: number): THREE.BufferGeometry {
-    // Quantise the key so a fine size slider doesn't mint a geometry per pixel of travel.
-    const key = Math.round(sideM * 1e5) / 1e5;
+    const key = Math.round(sideM * 1e4);
     let geo = this.#geometryCache.get(key);
     if (!geo) {
       geo = new RoundedBoxGeometry(sideM, sideM, sideM, 2, sideM * 0.03);
       this.#geometryCache.set(key, geo);
     }
+    this.#geometryRefs.set(key, (this.#geometryRefs.get(key) ?? 0) + 1);
     return geo;
+  }
+
+  /** Drops a reference; frees the GPU buffers once the last cube of that size is gone. */
+  releaseCubeGeometry(sideM: number): void {
+    const key = Math.round(sideM * 1e4);
+    const refs = (this.#geometryRefs.get(key) ?? 0) - 1;
+    if (refs > 0) {
+      this.#geometryRefs.set(key, refs);
+      return;
+    }
+    this.#geometryRefs.delete(key);
+    this.#geometryCache.get(key)?.dispose();
+    this.#geometryCache.delete(key);
   }
 
   metalMaterial(metal: MetalId): THREE.MeshStandardMaterial {

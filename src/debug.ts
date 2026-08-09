@@ -103,7 +103,11 @@ async function mountStats(app: App): Promise<void> {
 class ColliderOverlay {
   readonly #group = new THREE.Group();
   readonly #mat = new THREE.LineBasicMaterial({ color: 0xff6b1f, depthTest: false });
+  /** One wireframe per live entity, rebuilt only when the entity set changes. */
+  readonly #boxes = new Map<number, THREE.LineSegments>();
   #enabled = false;
+  #offSpawn: (() => void) | null = null;
+  #offDespawn: (() => void) | null = null;
 
   constructor(private readonly app: App) {
     this.#group.renderOrder = 999;
@@ -111,38 +115,57 @@ class ColliderOverlay {
   }
 
   setEnabled(on: boolean): void {
+    if (on === this.#enabled) return;
     this.#enabled = on;
     this.#group.visible = on;
-    if (on) this.#rebuild();
-    else this.#clear();
+    if (on) {
+      this.#sync();
+      // Rebuild on membership change only. The previous version re-created an
+      // EdgesGeometry per cube on EVERY frame via a self-scheduling rAF, which allocated
+      // more per second than the simulation it was there to inspect.
+      this.#offSpawn = this.app.bus.on('spawn', () => this.#sync());
+      this.#offDespawn = this.app.bus.on('despawn', () => this.#sync());
+    } else {
+      this.#offSpawn?.();
+      this.#offDespawn?.();
+      this.#offSpawn = this.#offDespawn = null;
+      this.#clear();
+    }
   }
 
   #clear(): void {
-    for (const c of [...this.#group.children]) {
-      this.#group.remove(c);
-      if (c instanceof THREE.LineSegments) c.geometry.dispose();
+    for (const box of this.#boxes.values()) {
+      this.#group.remove(box);
+      box.geometry.dispose();
     }
+    this.#boxes.clear();
   }
 
-  #rebuild(): void {
-    this.#clear();
+  #sync(): void {
+    const live = new Set<number>();
     for (const e of this.app.entities.all) {
+      live.add(e.id);
+      if (this.#boxes.has(e.id)) continue;
       const s = e.spec.sideM;
       // The *collider* is a sharp cuboid; the mesh has a 3 % chamfer. Seeing the two
       // disagree at the corners is the point of the overlay.
-      const box = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(s, s, s)),
-        this.#mat,
-      );
-      const bind = (): void => {
+      const src = new THREE.BoxGeometry(s, s, s);
+      const box = new THREE.LineSegments(new THREE.EdgesGeometry(src), this.#mat);
+      src.dispose();
+      // Track the mesh each frame without rebuilding anything.
+      box.onBeforeRender = () => {
         box.position.copy(e.mesh.position);
         box.quaternion.copy(e.mesh.quaternion);
       };
-      bind();
-      box.onBeforeRender = bind;
+      this.#boxes.set(e.id, box);
       this.#group.add(box);
     }
-    if (this.#enabled) requestAnimationFrame(() => this.#rebuild());
+    for (const [id, box] of [...this.#boxes]) {
+      if (live.has(id)) continue;
+      this.#group.remove(box);
+      box.geometry.dispose();
+      this.#boxes.delete(id);
+    }
   }
 }
 

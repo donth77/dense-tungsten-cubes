@@ -135,8 +135,33 @@ export class App implements Stepper {
         this.render.resolutionScale * config.quality.resolutionScaleStep,
       );
       this.loop.resetSlowCounter();
+      this.#fastFrames = 0;
+      return;
+    }
+
+    /*
+     * ...and recovers when the pressure passes (12 §5 says "recover slowly"; the first
+     * implementation only ever scaled down, so one thermal blip or one heavy moment
+     * permanently degraded the image for the rest of the session).
+     *
+     * Recovery is deliberately far slower than the drop and needs a long clean run:
+     * scaling back up is what *causes* the next slow frame, so an eager version
+     * oscillates between two resolutions and looks worse than either.
+     */
+    if (this.render.resolutionScale < 1) {
+      this.#fastFrames =
+        this.loop.frameMs < config.quality.slowFrameMs * 0.75 ? this.#fastFrames + 1 : 0;
+      if (this.#fastFrames >= config.quality.recoverAfterFrames) {
+        this.render.setResolutionScale(
+          Math.min(1, this.render.resolutionScale / config.quality.resolutionScaleStep),
+        );
+        this.#fastFrames = 0;
+      }
     }
   }
+
+  /** Consecutive comfortably-fast frames, for dynamic-resolution recovery. */
+  #fastFrames = 0;
 
   // ---- viewport -------------------------------------------------------------------
 

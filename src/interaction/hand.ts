@@ -34,7 +34,6 @@ export class TheHand {
   #mode: HandMode = 'one';
   #meter = 0;
   #restoreAngularDamping = 0;
-  #ccdOn = false;
   /** What the PD law asked for, and what actually went in after the clamp. */
   #demandN = 0;
   #appliedN = 0;
@@ -99,7 +98,12 @@ export class TheHand {
 
     // Held angular damping keeps the torque from an off-centre grab reading as "heavy
     // and badly balanced" rather than "spinning wildly" (08 §8.4).
-    this.#restoreAngularDamping = 0;
+    //
+    // Read the body's ACTUAL damping first rather than assuming 0. Cubes under 1" are
+    // created with angular damping 0.1 — the small-cube stability lever (05) — and
+    // hardcoding the restore value to 0 silently deleted it the first time anyone
+    // picked one up. The jitter gate never caught it because that test never grabs.
+    this.#restoreAngularDamping = this.physics.angularDampingOf(e.body);
     this.physics.setAngularDamping(e.body, config.hand.heldAngularDamping);
     this.bus.emit('grab', { id });
     this.bus.emit('select', { id });
@@ -122,10 +126,6 @@ export class TheHand {
     if (!e) return;
     e.heldBy = null;
     this.physics.setAngularDamping(e.body, this.#restoreAngularDamping);
-    if (this.#ccdOn) {
-      this.physics.setCcd(e.body, false);
-      this.#ccdOn = false;
-    }
     const v = this.physics.velocityOf(e.body);
     this.bus.emit('release', {
       id,
@@ -196,13 +196,10 @@ export class TheHand {
 
     this.physics.applyForceAtPoint(e.body, this.#f, this.#wGrab);
 
-    // Cheap flag flip: a thrown cube tunnels without it, and a held one never needs it.
-    const speed = Math.hypot(v.x, v.y, v.z);
-    const wantCcd = speed > config.hand.ccdSpeedMps;
-    if (wantCcd !== this.#ccdOn) {
-      this.physics.setCcd(e.body, wantCcd);
-      this.#ccdOn = wantCcd;
-    }
+    // CCD is NOT managed here. It used to be, and release() switched it off — at exactly
+    // the moment a thrown cube is fastest and needs it most. PhysicsWorld now drives it
+    // from speed alone, for every body, which is the only place that has the whole
+    // picture (see #clampSpeeds).
   }
 
   /** World-space grab point, for the force meter's screen position. */

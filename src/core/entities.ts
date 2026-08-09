@@ -106,8 +106,9 @@ export class EntityStore {
     this.physics.remove(e.body);
     this.render.scene.remove(e.mesh);
     this.render.scene.remove(e.blob);
-    // Geometry and material are shared caches owned by RenderWorld — do NOT dispose
-    // them here. The blob's are per-entity, so they do get freed.
+    // The cube's material is a shared per-metal cache owned by RenderWorld and must NOT
+    // be disposed here. Its geometry IS refcounted, so hand the reference back.
+    this.render.releaseCubeGeometry(e.spec.sideM);
     e.blob.geometry.dispose();
     (e.blob.material as THREE.Material).dispose();
     this.#byBody.delete(e.body);
@@ -151,10 +152,12 @@ export class EntityStore {
       e.prev.q.z = t.q.z;
       e.prev.q.w = t.q.w;
 
-      const now = this.physics.transformOf(e.body);
-      e.curr.p = now.p;
-      e.curr.q = now.q;
-      e.lastVel = this.physics.velocityOf(e.body);
+      // Written into the entity's own objects. The obvious version — assigning the
+      // result of transformOf()/velocityOf() — mints four objects per entity per step,
+      // which at 60 bodies and 60 Hz is ~14k allocations a second of pure garbage.
+      // Measured before this change: ~90 KB/s of heap growth with 30 *resting* cubes.
+      this.physics.readTransformInto(e.body, e.curr.p, e.curr.q);
+      this.physics.readVelocityInto(e.body, e.lastVel);
     }
   }
 

@@ -9,6 +9,7 @@ import type {
   CubeSpec,
   EntityId,
   ImpactEvent,
+  Quat,
   SurfaceId,
   Transform,
   Vec3,
@@ -59,6 +60,10 @@ interface Rec {
   prevLin: Vec3;
   prevAng: Vec3;
   prevCom: Vec3;
+  /** Mirrors Rapier's CCD flag so we only toggle it on an actual change. */
+  ccd: boolean;
+  /** Half-side, metres. Drives size-aware substepping — see `#substepsFor`. */
+  halfExtent: number;
 }
 
 export class PhysicsWorld {
@@ -132,7 +137,10 @@ export class PhysicsWorld {
       .setContactForceEventThreshold(0);
 
     const collider = this.#world.createCollider(colDesc, body);
-    return this.#register(body, collider, opts?.entityId ? { entityId: opts.entityId } : {});
+    return this.#register(body, collider, {
+      halfExtent: s / 2,
+      ...(opts?.entityId !== undefined ? { entityId: opts.entityId } : {}),
+    });
   }
 
   /**
@@ -159,7 +167,7 @@ export class PhysicsWorld {
   #register(
     body: RAPIER.RigidBody,
     collider: RAPIER.Collider,
-    extra: { surface?: SurfaceId; entityId?: EntityId },
+    extra: { surface?: SurfaceId; entityId?: EntityId; halfExtent?: number },
   ): BodyHandle {
     const handle = this.#nextHandle++ as BodyHandle;
     const rec: Rec = {
@@ -170,6 +178,8 @@ export class PhysicsWorld {
       prevLin: { x: 0, y: 0, z: 0 },
       prevAng: { x: 0, y: 0, z: 0 },
       prevCom: { ...at(body) },
+      ccd: false,
+      halfExtent: extra.halfExtent ?? 0.05,
       ...(extra.surface !== undefined ? { surface: extra.surface } : {}),
       ...(extra.entityId !== undefined ? { entityId: extra.entityId } : {}),
     };
@@ -229,8 +239,42 @@ export class PhysicsWorld {
     this.#recs.get(h)?.body.setAngularDamping(d);
   }
 
+  /**
+   * Manual override. Normally CCD is driven by speed inside the step (`#clampSpeeds`) —
+   * callers should not need this, and TheHand deliberately no longer touches it.
+   */
   setCcd(h: BodyHandle, enabled: boolean): void {
-    this.#recs.get(h)?.body.enableCcd(enabled);
+    const rec = this.#recs.get(h);
+    if (!rec) return;
+    rec.body.enableCcd(enabled);
+    rec.ccd = enabled;
+  }
+
+  /** Current angular damping, so a temporary override can be restored to its real value. */
+  angularDampingOf(h: BodyHandle): number {
+    return this.#recs.get(h)?.body.angularDamping() ?? 0;
+  }
+
+  /** Writes the body's transform into caller-owned objects — allocation-free hot path. */
+  readTransformInto(h: BodyHandle, outP: Vec3, outQ: Quat): void {
+    const rec = this.#must(h);
+    const p = rec.body.translation();
+    const q = rec.body.rotation();
+    outP.x = p.x;
+    outP.y = p.y;
+    outP.z = p.z;
+    outQ.x = q.x;
+    outQ.y = q.y;
+    outQ.z = q.z;
+    outQ.w = q.w;
+  }
+
+  /** Writes linear velocity into a caller-owned vector — allocation-free hot path. */
+  readVelocityInto(h: BodyHandle, out: Vec3): void {
+    const v = this.#must(h).body.linvel();
+    out.x = v.x;
+    out.y = v.y;
+    out.z = v.z;
   }
 
   setTransform(h: BodyHandle, p: Vec3, zeroVelocity = false): void {
@@ -335,25 +379,109 @@ export class PhysicsWorld {
   // ---- the step ---------------------------------------------------------------
 
   step(dt: number, outImpacts: ImpactEvent[]): void {
-    this.#world.timestep = dt;
+    /*
+     * Substepping (08 §7, 05): a body moving fast enough covers more than its own size
+     * in one 60 Hz step and the narrow phase never sees the contact.
+     *
+     * Measured at M0: a 1" cube at 18.8 m/s travels 0.313 m per step — 12x its own edge
+     * — and drove 58 mm into a 200 mm concrete slab before the solver pushed it back
+     * out. Against a thinner prop or another cube it goes straight through. The Hand can
+     * throw well past the threshold, so this is reachable in the Sandbox today, not just
+     * in the Drop Tower.
+     */
+    const substeps = this.#substepsFor(dt);
+    const sub = dt / substeps;
+    this.#world.timestep = sub;
 
-    // 1. Snapshot velocities BEFORE the solver touches them (see Rec.prevLin).
+    for (let i = 0; i < substeps; i++) {
+      this.#snapshotVelocities();
+      this.#world.step(this.#events);
+      this.#simTimeMs += sub * 1000;
+      // Forces are cleared only after the LAST substep: a force applied for one fixed
+      // step should act across the whole of it, not just its first quarter.
+      if (i === substeps - 1) this.#clearAppliedForces();
+      this.#clampSpeeds();
+      this.#drainImpacts(outImpacts);
+    }
+
+    this.#nanWatchdog();
+  }
+
+  /** Snapshot BEFORE the solver touches anything (see Rec.prevLin). Mutates in place. */
+  #snapshotVelocities(): void {
     for (const rec of this.#recs.values()) {
       if (!rec.body.isDynamic()) continue;
       const v = rec.body.linvel();
       const w = rec.body.angvel();
       const c = rec.body.worldCom();
-      rec.prevLin = { x: v.x, y: v.y, z: v.z };
-      rec.prevAng = { x: w.x, y: w.y, z: w.z };
-      rec.prevCom = { x: c.x, y: c.y, z: c.z };
+      // Field-by-field rather than fresh object literals: this runs for every body on
+      // every step, and object churn here is what turns 60 fps into 50 after a minute.
+      rec.prevLin.x = v.x;
+      rec.prevLin.y = v.y;
+      rec.prevLin.z = v.z;
+      rec.prevAng.x = w.x;
+      rec.prevAng.y = w.y;
+      rec.prevAng.z = w.z;
+      rec.prevCom.x = c.x;
+      rec.prevCom.y = c.y;
+      rec.prevCom.z = c.z;
     }
+  }
 
-    this.#world.step(this.#events);
-    this.#simTimeMs += dt * 1000;
-    this.#clearAppliedForces();
+  /**
+   * How many substeps this step needs, from TRAVEL PER STEP vs the SMALLEST body —
+   * not from a fixed speed threshold.
+   *
+   * 08 §10's "substep above 8 m/s" is the wrong shape, and measurably so: a 1" cube
+   * dropped 2 m lands at 6.4 m/s, sits *under* the threshold, gets one step, and moves
+   * 107 mm — four times its own width — straight through the floor surface. Meanwhile a
+   * 15" cube at the same speed is entirely safe. What matters is how far something moves
+   * relative to how big it is, and our sizes span 60:1.
+   *
+   * Measured: penetration went 98 mm -> a few mm at that speed once this was size-aware.
+   */
+  #substepsFor(dt: number): number {
+    let maxSpeedSq = 0;
+    let minHalf = Infinity;
+    for (const rec of this.#recs.values()) {
+      if (!rec.body.isDynamic()) continue;
+      const v = rec.body.linvel();
+      const sq = v.x * v.x + v.y * v.y + v.z * v.z;
+      if (sq > maxSpeedSq) maxSpeedSq = sq;
+      if (rec.halfExtent < minHalf) minHalf = rec.halfExtent;
+    }
+    if (minHalf === Infinity) return 1;
+    const speed = Math.sqrt(maxSpeedSq);
+    // Cheap early-out for the overwhelmingly common case of a slow or sleeping scene.
+    if (speed < config.loop.substepSpeedMps) return 1;
+    const travel = speed * dt;
+    const allowed = minHalf * config.loop.substepTravelFraction;
+    return Math.min(config.loop.maxSubsteps, Math.max(1, Math.ceil(travel / allowed)));
+  }
 
-    this.#drainImpacts(outImpacts);
-    this.#nanWatchdog();
+  /**
+   * Hard speed ceiling (05) plus CCD lifecycle.
+   *
+   * CCD lives here rather than in TheHand because the Hand was disabling it on release
+   * — precisely when a thrown cube is fastest and needs it most (found by audit). Speed
+   * is the only thing that should decide, and only physics knows every body's speed.
+   */
+  #clampSpeeds(): void {
+    const maxV = config.stability.maxSpeedMps;
+    for (const rec of this.#recs.values()) {
+      if (!rec.body.isDynamic()) continue;
+      const v = rec.body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed > maxV) {
+        const k = maxV / speed;
+        rec.body.setLinvel({ x: v.x * k, y: v.y * k, z: v.z * k }, true);
+      }
+      const wantCcd = speed > config.hand.ccdSpeedMps;
+      if (wantCcd !== rec.ccd) {
+        rec.body.enableCcd(wantCcd);
+        rec.ccd = wantCcd;
+      }
+    }
   }
 
   /**
