@@ -5,6 +5,7 @@ import { METALS } from '../data/metals.ts';
 import { SURFACES } from '../data/surfaces.ts';
 import type {
   BodyHandle,
+  CombineRule,
   CubeSpec,
   EntityId,
   ImpactEvent,
@@ -24,6 +25,21 @@ import type {
  */
 
 const GRAVITY_MPS2 = 9.81;
+
+/**
+ * `data/` declares its combine rule as a plain string so it never imports Rapier
+ * (08 §5.1). This is the only place the mapping exists.
+ */
+function combineRule(rule: CombineRule): RAPIER.CoefficientCombineRule {
+  switch (rule) {
+    case 'min':
+      return RAPIER.CoefficientCombineRule.Min;
+    case 'max':
+      return RAPIER.CoefficientCombineRule.Max;
+    default:
+      return RAPIER.CoefficientCombineRule.Average;
+  }
+}
 
 /** Per-body bookkeeping the public surface never exposes. */
 interface Rec {
@@ -109,6 +125,7 @@ export class PhysicsWorld {
       .setDensity(density)
       .setFriction(metal.friction)
       .setRestitution(metal.restitution)
+      .setRestitutionCombineRule(combineRule(metal.restitutionRule))
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       // 0 = report every contact force. The gate that decides what is an *impact* is
       // ours (§8.1), not Rapier's — a threshold here would silently drop soft landings.
@@ -131,6 +148,7 @@ export class PhysicsWorld {
       RAPIER.ColliderDesc.cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
         .setFriction(spec.friction)
         .setRestitution(spec.restitution)
+        .setRestitutionCombineRule(combineRule(spec.restitutionRule))
         .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
         .setContactForceEventThreshold(0),
       body,

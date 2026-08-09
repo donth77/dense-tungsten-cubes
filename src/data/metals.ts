@@ -1,4 +1,4 @@
-import type { MetalId } from '../types.ts';
+import type { CombineRule, MetalId } from '../types.ts';
 
 /**
  * The metal table (02 §3/§4). MVP-minimal: densities, contact coefficients and base
@@ -22,7 +22,23 @@ export interface MetalSpec {
   baseColorLinear: [number, number, number];
   roughness: number;
   friction: number;
+  /**
+   * Coefficient of restitution against a hard surface. NOT one shared value.
+   *
+   * 08 §10 specified a single "metal CoR 0.5" for all five metals. Measured at M0, that
+   * was wrong twice: 0.5 makes tungsten heavy alloy return ~22 % of its drop height off
+   * concrete and ~68 % off another tungsten cube (two free bodies recoil, so the pair
+   * bounces livelier than either material alone), and identical values across all five
+   * metals delete the Sandbox's whole premise that each metal sounds AND bounces
+   * differently (§9.1).
+   *
+   * WHA is dense and internally damped — the same property that makes its voice a dead
+   * TUNK rather than a ring (02 §10) — so it belongs at the bottom of this range, and
+   * hardened ferrous metal at the top.
+   */
   restitution: number;
+  /** See CombineRule. Metals damp, so they claim `min` and let a springy surface win. */
+  restitutionRule: CombineRule;
 }
 
 /**
@@ -80,7 +96,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     baseColorLinear: [0.504, 0.498, 0.478],
     roughness: 0.35, // machined WHA is duller than a polished comparison metal
     friction: 0.45,
-    restitution: 0.5,
+    restitution: 0.2, // dense, internally damped — the dead TUNK material
+    restitutionRule: 'min',
   },
   Cu: {
     id: 'Cu',
@@ -90,7 +107,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     baseColorLinear: [0.955, 0.638, 0.538],
     roughness: 0.25,
     friction: 0.45,
-    restitution: 0.5,
+    restitution: 0.3, // soft, deforms readily, low rebound
+    restitutionRule: 'min',
   },
   Fe: {
     id: 'Fe',
@@ -100,7 +118,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     baseColorLinear: [0.56, 0.57, 0.58],
     roughness: 0.25,
     friction: 0.45,
-    restitution: 0.5,
+    restitution: 0.6, // hardened ferrous metal is the classic bouncy one
+    restitutionRule: 'min',
   },
   Ti: {
     id: 'Ti',
@@ -110,7 +129,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     baseColorLinear: [0.542, 0.497, 0.449],
     roughness: 0.25,
     friction: 0.45,
-    restitution: 0.5,
+    restitution: 0.55, // springy: high strength for its stiffness
+    restitutionRule: 'min',
   },
   Al: {
     id: 'Al',
@@ -120,7 +140,8 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     baseColorLinear: [0.912, 0.914, 0.92],
     roughness: 0.25,
     friction: 0.45,
-    restitution: 0.5,
+    restitution: 0.35, // moderate, and it dents — plastic deformation eats the energy
+    restitutionRule: 'min',
   },
 };
 

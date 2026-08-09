@@ -7,6 +7,18 @@
  */
 
 export type MetalId = 'W' | 'Cu' | 'Fe' | 'Ti' | 'Al';
+
+/**
+ * How a material's contact coefficients combine with its partner's.
+ *
+ * Expressed as a plain string, not Rapier's enum, because `data/` must never import
+ * Rapier (08 §5.1) — `core/physics.ts` maps these to `CoefficientCombineRule`.
+ *
+ * Rapier resolves a pair by taking the higher-priority rule of the two colliders
+ * (average < min < multiply < max), which is what lets a springy surface outrank a
+ * damped cube while a damped cube outranks a hard floor.
+ */
+export type CombineRule = 'average' | 'min' | 'max';
 export type SurfaceId = 'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice';
 
 /** Monotonically increasing, never reused within a session. */

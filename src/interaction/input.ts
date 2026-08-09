@@ -50,6 +50,26 @@ export class InputRouter {
   #midY = 0;
   #twoPointerActive = false;
 
+  /**
+   * Cursor affordance (desktop only — `hover: hover` excludes touch, where a hover
+   * raycast every frame is pure waste).
+   *
+   * Native `grab`/`grabbing` rather than custom SVG cursors, deliberately: native ones
+   * inherit the OS pointer size and high-contrast settings, and a custom image cursor
+   * ignores both — it stays 32 px for someone who has scaled their pointer up.
+   *
+   * The clamp state is NOT expressed here. A cursor is binary, The Hand is analog, and
+   * a closed fist over a 6" tungsten cube would say "you've got it" while the cube
+   * refuses to move — lying about the one thing the toy exists to teach. The force
+   * meter owns that state (13 §5.3). `not-allowed` is wrong for the same reason: the
+   * action isn't forbidden, you're just not strong enough.
+   */
+  readonly #canHover = window.matchMedia('(hover: hover)').matches;
+  #hoverProbeQueued = false;
+  #hoverX = 0;
+  #hoverY = 0;
+  #cursor = '';
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly camera: THREE.PerspectiveCamera,
@@ -67,6 +87,7 @@ export class InputRouter {
     // A cancelled pointer is a RELEASE, not a nothing: a notification shade otherwise
     // leaves a cube welded to a finger that no longer exists (12 §4).
     c.addEventListener('pointercancel', this.#onCancel);
+    c.addEventListener('pointerleave', this.#onLeave);
     c.addEventListener('wheel', this.#onWheel, { passive: false });
     // Suppresses iOS's own ~500 ms long-press callout, which collides with our 450 ms
     // long-press spawn and would otherwise summon a text magnifier (12 §2).
@@ -80,6 +101,7 @@ export class InputRouter {
     c.removeEventListener('pointermove', this.#onMove);
     c.removeEventListener('pointerup', this.#onUp);
     c.removeEventListener('pointercancel', this.#onCancel);
+    c.removeEventListener('pointerleave', this.#onLeave);
     c.removeEventListener('wheel', this.#onWheel);
     window.removeEventListener('keydown', this.#onKey);
     this.#clearLongPress();
@@ -153,6 +175,7 @@ export class InputRouter {
       // the fingertip instead of snapping there.
       this.hand.aim(this.#aimRay(e.clientX, e.clientY, e.pointerType));
       st.grabbing = true;
+      this.#setCursor('grabbing');
     } else {
       // Empty space: this is an orbit, and a candidate long-press spawn.
       this.#armLongPress(e.clientX, e.clientY);
@@ -161,7 +184,11 @@ export class InputRouter {
 
   readonly #onMove = (e: PointerEvent): void => {
     const st = this.#pointers.get(e.pointerId);
-    if (!st) return;
+    if (!st) {
+      // Not dragging: this is a hover, and the only thing it drives is the cursor.
+      this.#queueHoverProbe(e.clientX, e.clientY);
+      return;
+    }
     const dx = e.clientX - st.x;
     const dy = e.clientY - st.y;
     st.x = e.clientX;
@@ -202,8 +229,14 @@ export class InputRouter {
         const ray = this.#pickRay(e.clientX, e.clientY);
         const hit = this.physics.raycast(ray.origin, ray.direction);
         const entity = hit ? this.entities.byBody(hit.handle) : undefined;
-        if (entity) this.bus.emit('select', { id: entity.id });
+        if (entity) {
+          this.bus.emit('select', { id: entity.id });
+          // 08 §8.5: gentle re-target onto it, and deliberately NO auto-orbit — the
+          // camera never changes angle without a hand on it.
+          this.rig.focusOn(entity.curr.p);
+        }
       }
+      this.#queueHoverProbe(e.clientX, e.clientY);
       return;
     }
 
@@ -216,6 +249,12 @@ export class InputRouter {
     // Zero throw velocity by intent: the cube drops where it was rather than being
     // flung by whatever the last pointer delta happened to be.
     if (st?.grabbing) this.hand.release();
+    this.#setCursor('');
+  };
+
+  /** Leaving the canvas must not strand a `grab` cursor over the rest of the page. */
+  readonly #onLeave = (): void => {
+    if (this.#pointers.size === 0) this.#setCursor('');
   };
 
   #finishPointer(id: number): void {
@@ -326,5 +365,39 @@ export class InputRouter {
       clearTimeout(this.#longPressTimer);
       this.#longPressTimer = null;
     }
+  }
+
+  // ---- cursor -------------------------------------------------------------------
+
+  #setCursor(v: string): void {
+    if (this.#cursor === v) return;
+    this.#cursor = v;
+    this.canvas.style.cursor = v;
+  }
+
+  /**
+   * Coalesced to one raycast per frame. `pointermove` can fire far faster than the
+   * display refreshes on a high-polling-rate mouse, and casting a ray per event would
+   * spend more on the cursor than on the simulation.
+   */
+  #queueHoverProbe(clientX: number, clientY: number): void {
+    if (!this.#canHover) return;
+    this.#hoverX = clientX;
+    this.#hoverY = clientY;
+    if (this.#hoverProbeQueued) return;
+    this.#hoverProbeQueued = true;
+    requestAnimationFrame(() => {
+      this.#hoverProbeQueued = false;
+      this.#probeHover();
+    });
+  }
+
+  #probeHover(): void {
+    if (!this.#canHover) return;
+    if (this.#pointers.size > 0) return; // mid-drag; the drag owns the cursor
+    const ray = this.#pickRay(this.#hoverX, this.#hoverY);
+    const hit = this.physics.raycast(ray.origin, ray.direction);
+    const over = hit ? this.entities.byBody(hit.handle) : undefined;
+    this.#setCursor(over ? 'grab' : '');
   }
 }

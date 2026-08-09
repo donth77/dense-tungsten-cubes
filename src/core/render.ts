@@ -124,10 +124,24 @@ export class RenderWorld {
     key.shadow.normalBias = 0.018;
     this.scene.add(key);
 
-    // A cool bounce from below-behind so the dark side of tungsten doesn't go to black.
-    const fill = new THREE.DirectionalLight(0x9fc0e0, 0.35);
-    fill.position.set(-2.4, 1.1, -2.0);
-    this.scene.add(fill);
+    /*
+     * Rim light — the fix for "the cube and the floor are the same grey".
+     *
+     * Measured at M0: a tungsten cube's vertical faces sat at contrast 1.06 against the
+     * floor, i.e. the silhouette was carried entirely by the contact shadow. Darkening
+     * the floor does NOT fix that, because at `metalness: 1.0` the cube's faces are
+     * mostly a reflection OF the environment — darken the ground and the cube darkens
+     * with it, and the two chase each other down.
+     *
+     * A LOW, grazing light from opposite the key does fix it, geometrically: the floor
+     * normal is (0,1,0), so at this elevation it receives N·L ≈ 0.17, while a vertical
+     * cube face receives ≈ 0.75. That is a 4x bias toward exactly the surfaces that
+     * needed separating — and rim highlights on the chamfers are also what sells an
+     * object as metal in the first place.
+     */
+    const rim = new THREE.DirectionalLight(0xa8c8e8, 1.9);
+    rim.position.set(-2.6, 0.62, -2.2);
+    this.scene.add(rim);
   }
 
   #buildStage(): void {
