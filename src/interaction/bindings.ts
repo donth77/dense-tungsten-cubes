@@ -1,0 +1,155 @@
+/**
+ * The canonical control list — **one table, two readers**.
+ *
+ * `interaction/input.ts` dispatches from it and `ui/help.ts` renders it, so the help
+ * screen physically cannot describe a shortcut that doesn't exist or miss one that
+ * does. A help panel maintained by hand is wrong within a week.
+ */
+
+export type ActionId =
+  | 'spawn'
+  | 'resetLab'
+  | 'resetView'
+  | 'toggleUnits'
+  | 'toggleSound'
+  | 'toggleEngraving'
+  | 'cycleGrip'
+  | 'toggleHelp'
+  | 'dismiss'
+  | 'metal1'
+  | 'metal2'
+  | 'metal3'
+  | 'metal4'
+  | 'metal5';
+
+export interface KeyBinding {
+  /** `KeyboardEvent.code` values that trigger this. */
+  codes: readonly string[];
+  /** How the key is written in the help panel. */
+  label: string;
+  action: ActionId;
+  description: string;
+  group: ControlGroup;
+}
+
+export type ControlGroup = 'Cubes' | 'Camera' | 'Display';
+
+export const KEY_BINDINGS: readonly KeyBinding[] = [
+  {
+    codes: ['Space'],
+    label: 'Space',
+    action: 'spawn',
+    description: 'Spawn a cube',
+    group: 'Cubes',
+  },
+  {
+    codes: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'],
+    label: '1 – 5',
+    action: 'metal1',
+    description: 'Pick metal (W, Cu, Fe, Ti, Al)',
+    group: 'Cubes',
+  },
+  {
+    codes: ['KeyR'],
+    label: 'R',
+    action: 'resetLab',
+    description: 'Clear the lab and start over',
+    group: 'Cubes',
+  },
+  {
+    codes: ['KeyG'],
+    label: 'G',
+    action: 'cycleGrip',
+    description: 'Cycle grip strength',
+    group: 'Cubes',
+  },
+  {
+    codes: ['KeyF'],
+    label: 'F',
+    action: 'resetView',
+    description: 'Reset the camera',
+    group: 'Camera',
+  },
+  {
+    codes: ['KeyU'],
+    label: 'U',
+    action: 'toggleUnits',
+    description: 'Switch units (kg / lb)',
+    group: 'Display',
+  },
+  {
+    codes: ['KeyM'],
+    label: 'M',
+    action: 'toggleSound',
+    description: 'Mute / unmute',
+    group: 'Display',
+  },
+  {
+    codes: ['KeyE'],
+    label: 'E',
+    action: 'toggleEngraving',
+    description: 'Engraved / plain face',
+    group: 'Display',
+  },
+  {
+    codes: ['Slash', 'KeyH'],
+    label: '? or H',
+    action: 'toggleHelp',
+    description: 'Show these controls',
+    group: 'Display',
+  },
+  {
+    codes: ['Escape'],
+    label: 'Esc',
+    action: 'dismiss',
+    description: 'Close this / deselect',
+    group: 'Display',
+  },
+];
+
+/** Pointer and touch gestures, for the help panel only — the router owns the behaviour. */
+export interface GestureHelp {
+  label: string;
+  description: string;
+  group: ControlGroup;
+}
+
+export const MOUSE_GESTURES: readonly GestureHelp[] = [
+  { label: 'Drag a cube', description: 'Pick it up — if you are strong enough', group: 'Cubes' },
+  { label: 'Click a cube', description: 'Show its details', group: 'Cubes' },
+  { label: 'Drag empty space', description: 'Orbit the camera', group: 'Camera' },
+  { label: 'Scroll', description: 'Zoom in and out', group: 'Camera' },
+  { label: 'Shift-drag / middle-drag', description: 'Pan across the stage', group: 'Camera' },
+  { label: 'Double-click empty', description: 'Reset the camera', group: 'Camera' },
+  { label: 'Hold on the floor', description: 'Spawn a cube right there', group: 'Cubes' },
+  {
+    label: 'Scroll while holding',
+    description: 'Push the cube away or pull it closer',
+    group: 'Cubes',
+  },
+];
+
+export const TOUCH_GESTURES: readonly GestureHelp[] = [
+  { label: 'Drag a cube', description: 'Pick it up — if you are strong enough', group: 'Cubes' },
+  { label: 'Tap a cube', description: 'Show its details', group: 'Cubes' },
+  { label: 'One finger on empty', description: 'Orbit the camera', group: 'Camera' },
+  {
+    label: 'Two fingers',
+    description: 'Pinch to zoom, drag to orbit — at the same time',
+    group: 'Camera',
+  },
+  { label: 'Three fingers', description: 'Pan across the stage', group: 'Camera' },
+  { label: 'Double-tap empty', description: 'Reset the camera', group: 'Camera' },
+  { label: 'Press and hold the floor', description: 'Spawn a cube right there', group: 'Cubes' },
+];
+
+export const CONTROL_GROUPS: readonly ControlGroup[] = ['Cubes', 'Camera', 'Display'];
+
+/** Resolves a `KeyboardEvent.code` to an action, honouring the 1–5 metal row. */
+export function actionForCode(code: string): ActionId | null {
+  if (/^Digit[1-5]$/.test(code)) return `metal${code.slice(-1)}` as ActionId;
+  for (const b of KEY_BINDINGS) {
+    if (b.codes.includes(code)) return b.action;
+  }
+  return null;
+}

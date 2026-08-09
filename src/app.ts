@@ -14,7 +14,8 @@ import { densityOf } from './data/metals.ts';
 import { LabManager } from './labs/lab.ts';
 import { Hud } from './ui/hud.ts';
 import { SettingsStore } from './ui/settings.ts';
-import type { CubeSpec, EntityId, ImpactEvent, Vec3 } from './types.ts';
+import type { CubeSpec, EntityId, ImpactEvent, MetalId, Vec3 } from './types.ts';
+import type { ActionId } from './interaction/bindings.ts';
 
 /**
  * App — the composition root (08 §4). Constructs and wires every system, and owns the
@@ -65,6 +66,8 @@ export class App implements Stepper {
         onFirstGesture: () => void this.audio.unlock(),
         onResetRequest: () => this.reset(),
         onLongPressProgress: (p, at) => this.hud.pressRing.update(p, at),
+        onAction: (a) => this.#runAction(a),
+        onKeyboardUsed: () => this.hud.help.noteKeyboardUsed(),
       },
     );
 
@@ -133,6 +136,50 @@ export class App implements Stepper {
     if (!e || e.spec.metal !== 'W' || spec.metal !== 'W' || spec.purityPctW === undefined) return;
     this.entities.setPurity(id, spec.purityPctW, densityOf('W', spec.purityPctW));
     this.hud.infocard.show(e.spec);
+  }
+
+  /** Every keyboard shortcut resolves here, from the shared table (bindings.ts). */
+  #runAction(action: ActionId): void {
+    switch (action) {
+      case 'spawn':
+        this.spawn();
+        break;
+      case 'resetLab':
+        this.reset();
+        break;
+      case 'resetView':
+        this.rig.reset(this.spec.sideM);
+        break;
+      case 'toggleUnits':
+        this.settings.toggleUnits();
+        break;
+      case 'toggleSound':
+        this.settings.toggleSound();
+        break;
+      case 'toggleEngraving':
+        this.settings.toggleEngraving();
+        break;
+      case 'cycleGrip':
+        this.hud.cycleHandMode();
+        break;
+      case 'toggleHelp':
+        this.hud.help.toggle();
+        break;
+      case 'dismiss':
+        if (this.hud.help.isOpen) this.hud.help.close();
+        else this.#select(null);
+        break;
+      case 'metal1':
+      case 'metal2':
+      case 'metal3':
+      case 'metal4':
+      case 'metal5': {
+        const metals: MetalId[] = ['W', 'Cu', 'Fe', 'Ti', 'Al'];
+        const picked = metals[Number(action.slice(-1)) - 1];
+        if (picked) this.hud.spawner.setMetal(picked);
+        break;
+      }
+    }
   }
 
   #select(id: EntityId | null): void {

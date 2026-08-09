@@ -1,8 +1,10 @@
 import './components.css';
-import { button, el, setText } from './dom.ts';
+import { button, clear, el, setText } from './dom.ts';
 import { InfoCard } from './infocard.ts';
 import { LayoutManager } from './layout.ts';
 import { ForceMeter } from './meter.ts';
+import { HelpPanel } from './help.ts';
+import { icon } from './icons.ts';
 import { PressRing } from './pressring.ts';
 import { Spawner } from './spawner.ts';
 import type { SpawnerCallbacks } from './spawner.ts';
@@ -30,6 +32,7 @@ export class Hud {
   readonly infocard: InfoCard;
   readonly meter: ForceMeter;
   readonly pressRing: PressRing;
+  readonly help: HelpPanel;
 
   readonly #toast: HTMLElement;
   #toastTimer: number | null = null;
@@ -37,6 +40,8 @@ export class Hud {
   readonly #soundBtn: HTMLElement;
   readonly #handBtn: HTMLElement;
   readonly #engraveBtn: HTMLElement;
+  readonly #helpBtn: HTMLElement;
+  readonly #viewBtn: HTMLElement;
   #handMode: HandModeId = 'one';
   /** The forklift is an easter egg, not a feature — it stays hidden until found. */
   #forkliftUnlocked = false;
@@ -57,22 +62,41 @@ export class Hud {
     this.labPanel = el('div.labpanel');
 
     this.#unitsBtn = button('KG', () => this.settings.toggleUnits(), {
-      class: 'iconbtn',
+      class: 'iconbtn text',
       'aria-label': 'Toggle units',
-      title: 'Units',
+      title: 'Units: kilograms  (U)',
     });
-    this.#soundBtn = button('♪', () => this.settings.toggleSound(), {
-      class: 'iconbtn',
+    // Icons, with the descriptive label as the hover tooltip. State-bearing readouts
+    // (grip, units) stay as short text — an icon cannot show "1H" vs "2H" vs "FL", and
+    // their whole job is to display a value.
+    this.#soundBtn = button('', () => this.settings.toggleSound(), {
+      class: 'iconbtn toggle',
       'aria-label': 'Mute',
       title: 'Sound',
     });
     // Engraved / plain (03 §6). Engraved is the default — it is what the real cubes
     // look like, and it is what turns a size line-up into a periodic-table line-up.
-    this.#engraveBtn = button('⊞', () => this.settings.toggleEngraving(), {
-      class: 'iconbtn',
-      'aria-label': 'Toggle engraved face',
+    this.#engraveBtn = button('', () => this.settings.toggleEngraving(), {
+      class: 'iconbtn toggle',
+      'aria-label': 'Engraved face',
       title: 'Engraved face',
     });
+    this.#engraveBtn.appendChild(icon('engrave'));
+
+    this.#helpBtn = button('', () => this.help.toggle(), {
+      class: 'iconbtn',
+      'aria-label': 'Controls and shortcuts',
+      title: 'Controls  (?)',
+      'aria-haspopup': 'dialog',
+    });
+    this.#helpBtn.appendChild(icon('help'));
+
+    this.#viewBtn = button('', () => this.cb.onResetView(), {
+      class: 'iconbtn',
+      'aria-label': 'Reset the camera',
+      title: 'Reset view  (F)',
+    });
+    this.#viewBtn.appendChild(icon('recenter'));
 
     /*
      * Hand mode. 08 §11 step 17 proposed long-pressing the meter to unlock the forklift,
@@ -80,10 +104,10 @@ export class Hud {
      * holding something — it cannot receive a press. This button carries the same idea:
      * tap cycles one/two hands, and a long press finds the 50 kN forklift.
      */
-    this.#handBtn = button('1H', () => this.#cycleHand(), {
-      class: 'iconbtn',
+    this.#handBtn = button('350 N', () => this.#cycleHand(), {
+      class: 'iconbtn text',
       'aria-label': 'Grip strength',
-      title: 'Grip: one hand (350 N)',
+      title: 'Grip: one hand — 350 N  (G)',
     });
     this.#bindForkliftUnlock();
 
@@ -100,26 +124,23 @@ export class Hud {
     );
 
     this.#toast = el('div.toast', { role: 'status', 'aria-live': 'polite' });
+    this.help = new HelpPanel(() => this.#helpBtn.focus());
 
     this.root.append(
       el(
         'div.topbar',
         {},
-        el('span.wordmark', { text: 'Dense' }),
+        el('h1.wordmark', { text: 'Dense' }),
         tabs,
         el('div.spacer'),
-        // A single reset-view control, not a camera panel: double-tap-to-reset is
-        // undiscoverable and a stuck angle is the one camera failure with no visible
-        // escape. Everything else stays direct manipulation.
-        button('⟲', () => this.cb.onResetView(), {
-          class: 'iconbtn',
-          'aria-label': 'Reset view',
-          title: 'Reset view',
-        }),
+        // A reset-view control and a help sheet, not a camera panel: everything else
+        // stays direct manipulation.
+        this.#viewBtn,
         this.#engraveBtn,
         this.#handBtn,
         this.#unitsBtn,
         this.#soundBtn,
+        this.#helpBtn,
       ),
       this.spawner.root,
       this.infocard.root,
@@ -127,22 +148,36 @@ export class Hud {
       this.pressRing.root,
       this.labPanel,
       this.#toast,
+      this.help.root,
     );
 
     this.settings.subscribe((s) => {
       setText(this.#unitsBtn, s.units === 'si' ? 'KG' : 'LB');
-      setText(this.#soundBtn, s.sound ? '♪' : '✕');
-      this.#soundBtn.setAttribute('aria-pressed', String(!s.sound));
+      this.#unitsBtn.setAttribute(
+        'title',
+        s.units === 'si' ? 'Units: kilograms  (U)' : 'Units: pounds  (U)',
+      );
+      clear(this.#soundBtn);
+      this.#soundBtn.appendChild(icon(s.sound ? 'sound' : 'muted'));
+      this.#soundBtn.setAttribute('aria-pressed', String(s.sound));
       this.#soundBtn.setAttribute('aria-label', s.sound ? 'Mute' : 'Unmute');
+      clear(this.#engraveBtn);
+      this.#engraveBtn.appendChild(icon(s.engraving ? 'engrave' : 'engraveOff'));
       this.#engraveBtn.setAttribute('aria-pressed', String(s.engraving));
-      this.#engraveBtn.setAttribute('title', s.engraving ? 'Engraved face' : 'Plain face');
-      this.#engraveBtn.classList.toggle('active', s.engraving);
+      this.#engraveBtn.setAttribute(
+        'title',
+        s.engraving ? 'Engraved face — on  (E)' : 'Engraved face — off  (E)',
+      );
     });
 
     // Keep the info card clear of the sheet in portrait: the sheet's height is content-
     // driven, so it is measured rather than assumed.
     this.layout.subscribe(() => this.#syncSheetMetrics());
     requestAnimationFrame(() => this.#syncSheetMetrics());
+  }
+
+  cycleHandMode(): void {
+    this.#cycleHand();
   }
 
   #cycleHand(): void {
@@ -156,15 +191,23 @@ export class Hud {
 
   setHandMode(mode: HandModeId): void {
     this.#handMode = mode;
-    const label = mode === 'one' ? '1H' : mode === 'two' ? '2H' : 'FL';
+    /*
+     * The label is the FORCE, not a hand count.
+     *
+     * It shipped as "1H / 2H / FL" and the first person to see it asked what it meant —
+     * which is the whole answer. The force cap is self-explanatory next to a force
+     * meter that reads in newtons, it is the number 01's Hand table is written in, and
+     * it teaches the mechanic instead of encoding it.
+     */
+    const label = mode === 'one' ? '350 N' : mode === 'two' ? '700 N' : '50 kN';
     const title =
       mode === 'one'
-        ? 'Grip: one hand (350 N)'
+        ? 'Grip: one hand — 350 N'
         : mode === 'two'
-          ? 'Grip: two hands (700 N)'
-          : 'Grip: forklift (50 kN)';
+          ? 'Grip: two hands — 700 N'
+          : 'Grip: forklift — 50 kN';
     setText(this.#handBtn, label);
-    this.#handBtn.setAttribute('title', title);
+    this.#handBtn.setAttribute('title', `${title}  (G)`);
     this.#handBtn.classList.toggle('forklift', mode === 'forklift');
   }
 
@@ -217,7 +260,7 @@ export class Hud {
         el(
           'div.lineup-buttons',
           {},
-          ...controls.map((c) => button(c.label, c.onSelect, { class: 'chip' })),
+          ...controls.map((c) => button(c.label, c.onSelect, { class: 'chip action' })),
         ),
       ),
     );

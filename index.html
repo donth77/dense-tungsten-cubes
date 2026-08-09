@@ -142,7 +142,11 @@
   </head>
   <body>
     <div id="app">
-      <canvas id="stage"></canvas>
+      <canvas id="stage" aria-label="Physics stage: metal cubes on a concrete floor" role="img">
+        An interactive 3D stage where metal cubes can be dropped and picked up. The controls beside
+        it work without the stage: use the spawner to choose a metal, purity and size, and the panel
+        reports each cube's mass, density and volume.
+      </canvas>
       <div id="ui"></div>
 
       <div id="boot">

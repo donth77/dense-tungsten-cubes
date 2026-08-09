@@ -81,12 +81,17 @@ export class Spawner {
       const [r, g, b] = spec.baseColorLinear;
       // The swatch shows TRUE material colour, so it must match what renders in the
       // scene — linear values converted the same way the material does.
-      const css = `rgb(${lin2srgb(r)} ${lin2srgb(g)} ${lin2srgb(b)})`;
+      const rgb = [lin2srgb(r), lin2srgb(g), lin2srgb(b)] as const;
+      const css = `rgb(${rgb[0]} ${rgb[1]} ${rgb[2]})`;
+      // The symbol sits ON the material colour, so its ink has to come FROM that colour.
+      // Fixed light ink measured 1.32:1 on aluminium and 1.67:1 on copper — the audit
+      // caught two swatches whose labels were effectively invisible.
+      const onSwatch = readableInk(rgb);
       const btn = el(
         'button.metal',
         {
           type: 'button',
-          style: `--swatch:${css}`,
+          style: `--swatch:${css}; --on-swatch:${onSwatch}`,
           'aria-pressed': String(id === this.#metal),
           'aria-label': spec.label,
           title: spec.label,
@@ -193,6 +198,11 @@ export class Spawner {
 
   // ---- state ----------------------------------------------------------------------
 
+  /** Keyboard 1–5 picks a metal (bindings.ts). */
+  setMetal(id: MetalId): void {
+    this.#setMetal(id);
+  }
+
   #setMetal(id: MetalId): void {
     this.#metal = id;
     this.#refresh();
@@ -220,6 +230,10 @@ export class Spawner {
     const rho =
       this.#metal === 'W' ? whaDensity(this.#purity) : (METALS[this.#metal].densityKgM3 ?? 0);
     setText(this.#purityValue, percent(this.#purity));
+    this.#purityInput.setAttribute(
+      'aria-valuetext',
+      `${percent(this.#purity)} tungsten, ${astmClassLabel(this.#purity)}`,
+    );
     // 08 §16.7: a free slider position gets the bracketing classes, not a rounded lie.
     setText(this.#classChip, `${astmClassLabel(this.#purity)} · ρ ${density(rho).primary}`);
     setText(this.#purityBubble, percent(this.#purity));
@@ -227,6 +241,9 @@ export class Spawner {
     const side = cubeSide(this.#sizeIn * M_PER_IN);
     setText(this.#sizeValue, `${side.primary}  ${side.secondary}`);
     setText(this.#sizeBubble, side.primary);
+    // Without this a screen reader announces the RAW slider position — and the size
+    // slider is log-scaled 0–1000, so it would read "537" for a 2-inch cube.
+    this.#sizeInput.setAttribute('aria-valuetext', `${side.primary}, ${side.secondary}`);
 
     const kg = cubeMassKg(this.#metal, this.#sizeIn * M_PER_IN, this.#purity);
     const m = mass(kg, this.settings.units);
@@ -247,6 +264,19 @@ export class Spawner {
  * effective exposure keeps the swatch row reading like the line-up it produces.
  */
 const SWATCH_EXPOSURE = 0.62;
+
+/** Black or white, whichever actually contrasts with the swatch behind it. */
+function readableInk(rgb: readonly [number, number, number]): string {
+  const lin = rgb.map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  const L = 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!;
+  // Contrast against white vs against near-black; take whichever wins.
+  const vsWhite = 1.05 / (L + 0.05);
+  const vsBlack = (L + 0.05) / 0.05;
+  return vsBlack > vsWhite ? '#101418' : '#f2f6f9';
+}
 
 function lin2srgb(c: number): number {
   const e = c * SWATCH_EXPOSURE;

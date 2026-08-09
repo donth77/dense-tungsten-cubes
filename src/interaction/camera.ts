@@ -3,6 +3,7 @@ import { config } from '../config.ts';
 import type { Vec3 } from '../types.ts';
 
 const DEG = Math.PI / 180;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 /**
  * CameraRig — spherical orbit with goal-state damping (08 §8.5).
@@ -35,6 +36,11 @@ export class CameraRig {
     target: this.#goal.target.clone(),
   };
 
+  // Scratch for pan — no allocation per pointer move.
+  readonly #fwd = new THREE.Vector3();
+  readonly #right = new THREE.Vector3();
+  readonly #up = new THREE.Vector3();
+
   #viewOffsetPx = { x: 0, y: 0 };
   #reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -60,6 +66,35 @@ export class CameraRig {
       config.camera.distMinM,
       config.camera.distMaxM,
     );
+  }
+
+  /**
+   * Slide the look-at target across the stage.
+   *
+   * Pan is the classic way to get lost in a 3D view, so two things bound it: the target
+   * is clamped to the play area (you cannot end up staring at empty concrete two metres
+   * from anything), and the movement scales with distance so it feels identical zoomed
+   * right in or right out.
+   *
+   * 08 §8.5 didn't include pan and I argued against adding it — the objection was that
+   * it strands people and that touch had no free gesture. A discoverable help panel and
+   * a visible Reset View button answer the first; three fingers answer the second.
+   */
+  pan(dxPx: number, dyPx: number): void {
+    const scale = this.#state.distM * config.camera.panSpeed;
+    this.camera.getWorldDirection(this.#fwd);
+    this.#right.crossVectors(this.#fwd, WORLD_UP).normalize();
+    // Screen-up in the ground plane, so panning tracks the floor rather than the sky.
+    this.#up.crossVectors(this.#right, this.#fwd).normalize();
+
+    this.#goal.target
+      .addScaledVector(this.#right, -dxPx * scale)
+      .addScaledVector(this.#up, dyPx * scale);
+
+    const lim = config.camera.panLimitM;
+    this.#goal.target.x = clamp(this.#goal.target.x, -lim, lim);
+    this.#goal.target.z = clamp(this.#goal.target.z, -lim, lim);
+    this.#goal.target.y = clamp(this.#goal.target.y, 0, config.camera.panLimitYM);
   }
 
   /** Gentle re-target onto a selected cube. Deliberately does not orbit (08 §8.5). */

@@ -319,8 +319,13 @@
   border-radius: var(--r-sm);
   color: var(--ink2);
   font: 600 var(--t-sm) / 1 var(--mono);
-  padding: var(--s2) var(--s3);
-  min-height: 32px;
+  /* Drawn at 32px but the HIT AREA is 44 (12 §4). The first pass set min-height 32
+     and forgot the padding that gets it to 44, so every size preset was a 32px target. */
+  padding: 6px var(--s3);
+  min-height: var(--tap);
+  /* Width too: a 1" chip is only 40px of text, and a 44px-tall / 40px-wide target
+     still fails the guideline in the axis a thumb misses. */
+  min-width: var(--tap);
   cursor: pointer;
 }
 .chip[aria-pressed='true'] {
@@ -565,4 +570,128 @@
 
 .iconbtn.active {
   color: var(--ink);
+}
+
+/* ---------------------------------------------------------------------------
+   Icon buttons — icons are inline SVG, so they inherit currentColor
+   --------------------------------------------------------------------------- */
+
+.iconbtn svg {
+  display: block;
+  margin: 0 auto;
+}
+/* State-bearing readouts (grip, units) stay as text: an icon cannot show "1H" vs
+   "2H", and displaying a value is their whole job. */
+.iconbtn.text {
+  font: 600 var(--t-base) / 1 var(--mono);
+  letter-spacing: 0.06em;
+}
+
+/* ---------------------------------------------------------------------------
+   Help sheet
+   --------------------------------------------------------------------------- */
+
+.help {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+  padding: calc(var(--s4) + var(--safe-t)) calc(var(--s4) + var(--safe-r))
+    calc(var(--s4) + var(--safe-b)) calc(var(--s4) + var(--safe-l));
+  z-index: 20;
+}
+.help[hidden] {
+  display: none;
+}
+.help-card {
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-md);
+  padding: var(--s4);
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.help-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+.help-title {
+  font: 600 var(--t-lg) / 1.2 var(--disp);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin: 0;
+}
+.help-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.help-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.help-group .k {
+  font: 600 var(--t-micro) / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin: 0 0 var(--s1);
+}
+.help-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 34%) 1fr;
+  gap: var(--s3);
+  align-items: baseline;
+  padding: 3px 0;
+}
+.help-key,
+.help-gesture {
+  font: 600 var(--t-sm) / 1.3 var(--mono);
+  color: var(--ink);
+  background: var(--card2);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  justify-self: start;
+}
+/* Gestures read as prose, not as keycaps. */
+.help-gesture {
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--ink2);
+  font-weight: 500;
+}
+.help-desc {
+  font: 400 var(--t-base) / 1.4 var(--body);
+  color: var(--ink2);
+}
+.help-note {
+  font: 400 var(--t-sm) / 1.4 var(--body);
+  color: var(--ink3);
+  margin: 0;
+  border-top: var(--hair) solid var(--line);
+  padding-top: var(--s2);
+}
+@media (max-width: 520px) {
+  .help-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+/* Lab controls are actions, not toggles — no pressed state to express. */
+.chip.action[aria-pressed] {
+  background: var(--card2);
 }

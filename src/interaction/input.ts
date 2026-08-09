@@ -5,6 +5,8 @@ import type { EventBus } from '../core/events.ts';
 import type { PhysicsWorld } from '../core/physics.ts';
 import type { CameraRig } from './camera.ts';
 import type { TheHand } from './hand.ts';
+import { actionForCode } from './bindings.ts';
+import type { ActionId } from './bindings.ts';
 
 /**
  * InputRouter — one capture-phase pointer pipeline on the canvas (08 §8.6).
@@ -24,6 +26,8 @@ interface PointerState {
   moved: number;
   /** True when this pointer is the one holding a cube. */
   grabbing: boolean;
+  /** True when this drag is panning rather than orbiting (shift / middle button). */
+  panning: boolean;
 }
 
 export interface InputCallbacks {
@@ -38,6 +42,10 @@ export interface InputCallbacks {
    * gesture exists at all (12 §4).
    */
   onLongPressProgress(progress: number, screen: { x: number; y: number } | null): void;
+  /** Dispatched from the shared binding table (interaction/bindings.ts). */
+  onAction(action: ActionId): void;
+  /** A keyboard cannot be feature-detected, only witnessed — this is that witness. */
+  onKeyboardUsed(): void;
 }
 
 export class InputRouter {
@@ -56,6 +64,9 @@ export class InputRouter {
   #midX = 0;
   #midY = 0;
   #twoPointerActive = false;
+  #threePointerActive = false;
+  #panMidX = 0;
+  #panMidY = 0;
 
   /**
    * Cursor affordance (desktop only — `hover: hover` excludes touch, where a hover
@@ -160,6 +171,7 @@ export class InputRouter {
       startT: performance.now(),
       moved: 0,
       grabbing: false,
+      panning: false,
     };
     this.#pointers.set(e.pointerId, st);
 
@@ -168,7 +180,15 @@ export class InputRouter {
       this.#clearLongPress();
       return;
     }
-    if (this.#pointers.size > 2) return;
+    if (this.#pointers.size === 3) {
+      // Three fingers pan. Two are already spoken for — 12 §4 requires dolly AND orbit
+      // simultaneously, never mode-locked — so this is the only free touch gesture.
+      // Undiscoverable on its own, which is exactly what the help sheet is for.
+      this.#beginThreePointer();
+      this.#clearLongPress();
+      return;
+    }
+    if (this.#pointers.size > 3) return;
 
     // First pointer: does the ray hit a cube?
     const ray = this.#pickRay(e.clientX, e.clientY);
@@ -184,8 +204,11 @@ export class InputRouter {
       st.grabbing = true;
       this.#setCursor('grabbing');
     } else {
-      // Empty space: this is an orbit, and a candidate long-press spawn.
-      this.#armLongPress(e.clientX, e.clientY);
+      // Shift-drag or the middle button pans instead of orbiting. Both are free on
+      // desktop, and pan needs somewhere to live that doesn't fight the one-finger rule.
+      st.panning = e.shiftKey || e.button === 1;
+      // Empty space: this is an orbit (or pan), and a candidate long-press spawn.
+      if (!st.panning) this.#armLongPress(e.clientX, e.clientY);
     }
   };
 
@@ -206,13 +229,19 @@ export class InputRouter {
       st.type === 'touch' ? config.input.tapMaxMovePxTouch : config.input.tapMaxMovePxMouse;
     if (st.moved > slop) this.#clearLongPress();
 
-    if (this.#pointers.size >= 2) {
+    if (this.#pointers.size >= 3) {
+      this.#updateThreePointer();
+      return;
+    }
+    if (this.#pointers.size === 2) {
       this.#updateTwoPointer();
       return;
     }
 
     if (st.grabbing) {
       this.hand.aim(this.#aimRay(e.clientX, e.clientY, e.pointerType));
+    } else if (st.panning) {
+      this.rig.pan(dx, dy);
     } else {
       this.rig.orbit(dx, dy);
     }
@@ -268,6 +297,7 @@ export class InputRouter {
     this.#pointers.delete(id);
     this.#clearLongPress();
     if (this.#pointers.size < 2) this.#twoPointerActive = false;
+    if (this.#pointers.size < 3) this.#threePointerActive = false;
     try {
       this.canvas.releasePointerCapture(id);
     } catch {
@@ -290,6 +320,29 @@ export class InputRouter {
   }
 
   // ---- two-pointer: dolly AND orbit, never mode-locked ---------------------------
+
+  #beginThreePointer(): void {
+    const pts = [...this.#pointers.values()];
+    this.#panMidX = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    this.#panMidY = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    this.#threePointerActive = true;
+    this.#twoPointerActive = false;
+  }
+
+  #updateThreePointer(): void {
+    if (!this.#threePointerActive) return;
+    const pts = [...this.#pointers.values()];
+    if (pts.length < 3) return;
+    const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+    const my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+    const dx = mx - this.#panMidX;
+    const dy = my - this.#panMidY;
+    if (Math.hypot(dx, dy) > config.input.twoPointerDeadzonePx) {
+      this.rig.pan(dx, dy);
+      this.#panMidX = mx;
+      this.#panMidY = my;
+    }
+  }
 
   #beginTwoPointer(): void {
     const [a, b] = [...this.#pointers.values()];
@@ -343,13 +396,20 @@ export class InputRouter {
   };
 
   readonly #onKey = (e: KeyboardEvent): void => {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-    if (e.code === 'Space') {
-      e.preventDefault();
-      this.cb.onSpawnRequest(null);
-    } else if (e.code === 'KeyR') {
-      this.cb.onResetRequest();
-    }
+    // Never steal a key from a control that is meant to receive it — a range input uses
+    // arrows and Home/End, and a text field uses everything.
+    const t = e.target;
+    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+    // Modifier combinations belong to the browser (Cmd-R, Ctrl-F …).
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    this.cb.onKeyboardUsed();
+
+    const action = actionForCode(e.code);
+    if (!action) return;
+    // Space scrolls and '/' opens quick-find if we don't claim them.
+    e.preventDefault();
+    this.cb.onAction(action);
   };
 
   // ---- long press ---------------------------------------------------------------

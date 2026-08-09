@@ -19,7 +19,10 @@
   /* ---- ink: primary -> tertiary ---- */
   --ink: #dbe3ea;
   --ink2: #9aa7b2;
-  --ink3: #6d7a86;
+  /* Lightened from #6d7a86, which measured 3.61:1 on --card. WCAG needs 4.5:1 for
+     text under 18.66px, and micro-labels are 9.5px — the "3:1 is fine for labels"
+     shortcut in an earlier draft of 13 §6 was simply wrong. Now ~5.2:1. */
+  --ink3: #8b97a4;
 
   /* ---- lines ---- */
   --line: #2e3945; /* hairline dividers inside a panel */

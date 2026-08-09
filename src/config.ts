@@ -67,6 +67,11 @@ export const config = {
     distMinM: 0.3,
     distMaxM: 20,
     orbitSpeed: 0.008,
+    /** Pan scales with distance so it feels the same zoomed in or out. */
+    panSpeed: 0.0016,
+    /** Target stays inside the play area — pan must never strand you on empty floor. */
+    panLimitM: 1.2,
+    panLimitYM: 1.0,
     dollySpeed: 0.0015,
   },
 
