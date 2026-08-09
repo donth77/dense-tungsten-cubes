@@ -10,7 +10,11 @@ import { AudioBus } from './fx/audio.ts';
 import { CameraRig } from './interaction/camera.ts';
 import { TheHand } from './interaction/hand.ts';
 import { InputRouter } from './interaction/input.ts';
-import type { CubeSpec, ImpactEvent, Vec3 } from './types.ts';
+import { densityOf } from './data/metals.ts';
+import { LabManager } from './labs/lab.ts';
+import { Hud } from './ui/hud.ts';
+import { SettingsStore } from './ui/settings.ts';
+import type { CubeSpec, EntityId, ImpactEvent, Vec3 } from './types.ts';
 
 /**
  * App — the composition root (08 §4). Constructs and wires every system, and owns the
@@ -26,6 +30,12 @@ export class App implements Stepper {
   readonly audio: AudioBus;
   readonly input: InputRouter;
   readonly loop: Loop;
+  readonly settings = new SettingsStore();
+  readonly hud: Hud;
+  readonly labs: LabManager;
+
+  /** The cube the info card is describing, and the one the purity slider retunes. */
+  #selected: EntityId | null = null;
 
   /** Reused each step — the impact list must not allocate at 60 Hz. */
   readonly #impacts: ImpactEvent[] = [];
@@ -63,11 +73,65 @@ export class App implements Stepper {
       const e = this.entities.get(id);
       if (e) this.audio.registerEntity(id, e.spec.metal, e.spec.sideM);
     });
-    this.bus.on('despawn', ({ id }) => this.audio.unregisterEntity(id));
+    this.bus.on('despawn', ({ id }) => {
+      this.audio.unregisterEntity(id);
+      if (this.#selected === id) this.#select(null);
+    });
+
+    const uiRoot = document.getElementById('ui');
+    const appEl = document.getElementById('app');
+    if (!uiRoot || !appEl) throw new Error('missing #ui / #app');
+    this.hud = new Hud(uiRoot, appEl, this.settings, {
+      onSpawn: () => this.spawn(),
+      onSpecChange: (spec) => this.#onSpecChange(spec),
+      onResetView: () => this.rig.reset(this.spec.sideM),
+      onLabChange: (lab) => void this.labs.switchTo(lab),
+    });
+
+    this.bus.on('select', ({ id }) => this.#select(id));
+    this.settings.subscribe((s) => this.audio.setMuted(!s.sound));
+    // The camera has to know about the UI, or a selected cube sits behind the sheet
+    // (12 §3). The layout class is the single source both read.
+    this.hud.layout.subscribe((s) => this.rig.setViewportOffset(s.offset.x, s.offset.y));
+
+    this.labs = new LabManager({
+      physics: this.physics,
+      entities: this.entities,
+      render: this.render,
+      scene: this.render.scene,
+      bus: this.bus,
+      camera: { frameRadius: (r) => this.rig.frameRadius(r) },
+      ui: {
+        setControls: (label, controls) => this.hud.setLabControls(label, controls),
+        toast: (m) => this.hud.toast(m),
+      },
+    });
 
     this.#buildStage();
     this.loop = new Loop(this);
     this.#bindResize();
+  }
+
+  /**
+   * A spec change from the spawner. If a cube is selected, the purity slider retunes
+   * **that cube in place** (08 §9.2) — `collider.setDensity` recomputes its mass
+   * properties without dropping its pose, velocity, contacts or grab.
+   */
+  #onSpecChange(spec: CubeSpec): void {
+    this.spec = spec;
+    const id = this.#selected;
+    if (id === null) return;
+    const e = this.entities.get(id);
+    if (!e || e.spec.metal !== 'W' || spec.metal !== 'W' || spec.purityPctW === undefined) return;
+    this.entities.setPurity(id, spec.purityPctW, densityOf('W', spec.purityPctW));
+    this.hud.infocard.show(e.spec);
+  }
+
+  #select(id: EntityId | null): void {
+    this.#selected = id;
+    const e = id === null ? undefined : this.entities.get(id);
+    if (e) this.hud.infocard.show(e.spec);
+    else this.hud.infocard.hide();
   }
 
   #buildStage(): void {
@@ -91,11 +155,16 @@ export class App implements Stepper {
       y: config.stage.trayCentre.y,
       z: config.stage.trayCentre.z + (Math.random() * 2 - 1) * config.stage.trayScatterM,
     };
+    const before = this.entities.size;
     this.entities.spawn({ ...this.spec }, p);
+    if (before >= config.limits.maxCubes) {
+      this.hud.toast(`Cube limit reached (${config.limits.maxCubes}) — oldest removed`);
+    }
   }
 
   reset(): void {
     this.hand.release();
+    this.#select(null);
     this.entities.clear();
     this.rig.reset(this.spec.sideM);
     this.spawn();
@@ -107,7 +176,8 @@ export class App implements Stepper {
     // 1. input is event-driven and already latched by the browser; nothing to snapshot.
     // 2. Hand forces go on PRE-step, so the solver resolves them in the same step.
     this.hand.applyForces();
-    // 3. labs.active.update?.(dt) — no labs until M1.
+    // 3. Lab hook (the weigh station samples its readout here at M2a).
+    this.labs.update(dt);
     // 4. Step, draining gated impacts.
     this.#impacts.length = 0;
     this.physics.step(dt, this.#impacts);
@@ -124,6 +194,14 @@ export class App implements Stepper {
     this.entities.interpolate(alpha);
     this.rig.update(dtFrameS);
     this.render.render();
+
+    // The meter reads a live clamped force, so it updates every frame rather than on an
+    // event — it is an instrument, not a notification (13 §5.3).
+    this.hud.meter.update(
+      this.hand.meter,
+      this.hand.isHolding ? this.grabPointScreen() : null,
+      this.hud.layout.isTouchLayout,
+    );
 
     // Dynamic resolution: sustained slow frames shrink the render target. Physics is
     // untouched — the fixed step never scales (12 §5).
@@ -180,6 +258,7 @@ export class App implements Stepper {
 
   start(): void {
     this.rig.frameFor(this.spec.sideM);
+    void this.labs.switchTo('sandbox');
     this.spawn();
     this.loop.start();
   }

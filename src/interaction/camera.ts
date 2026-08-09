@@ -96,6 +96,24 @@ export class CameraRig {
   }
 
   /**
+   * Frame a region of this radius around the stage centre.
+   *
+   * `frameFor(sideM)` frames a single cube, which is right on boot but wrong the moment
+   * a lab lays out mats over a metre and a half — the default view would show one cube
+   * and a wall of oak. A lab declares its own extent and this frames that instead.
+   */
+  frameRadius(radiusM: number): void {
+    const vFov = (config.camera.fovDeg * Math.PI) / 180;
+    // Fit the radius vertically with a little air, and never leave the clamp range.
+    this.#goal.distM = clamp(
+      (radiusM * 1.25) / Math.tan(vFov / 2),
+      config.camera.distMinM,
+      config.camera.distMaxM,
+    );
+    this.#goal.target.set(config.camera.target.x, radiusM * 0.12, config.camera.target.z);
+  }
+
+  /**
    * The camera has to know about the UI (12 §3): with a bottom sheet open, the visual
    * centre of the *free* area is well above the centre of the canvas, so a cube framed
    * at the geometric centre sits behind the sheet.

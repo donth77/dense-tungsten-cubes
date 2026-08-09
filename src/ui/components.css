@@ -1,0 +1,555 @@
+/**
+ * Components — 13-ui-design.md §5, laid out per §8's composition study.
+ *
+ * Every panel is positioned off the layout class on `#app` (12 §3), never off its own
+ * media query: one source of truth, so CSS and the camera can never disagree about
+ * which layout is active.
+ */
+
+/* ---------------------------------------------------------------------------
+   Top bar (13 §5.5)
+   --------------------------------------------------------------------------- */
+
+.topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: calc(48px + var(--safe-t));
+  padding: var(--safe-t) calc(var(--s4) + var(--safe-r)) 0 calc(var(--s4) + var(--safe-l));
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  background: linear-gradient(var(--bg) 45%, transparent);
+  border-bottom: var(--hair) solid var(--line);
+}
+#app.phone-portrait .topbar,
+#app.phone-landscape .topbar {
+  height: calc(40px + var(--safe-t));
+}
+
+.wordmark {
+  font: 600 var(--t-base) / 1 var(--disp);
+  letter-spacing: 0.18em;
+  color: var(--tung);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+/* Lab tabs. The active one takes the accent underline — one of its four sanctioned
+   uses (13 §2.1). */
+.tabs {
+  display: flex;
+  gap: var(--s1);
+}
+.tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--ink3);
+  font: 600 var(--t-micro) / 1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: var(--s2) var(--s2);
+  min-height: var(--tap);
+  cursor: pointer;
+}
+.tab[aria-selected='true'] {
+  color: var(--ink);
+  border-bottom-color: var(--acc);
+}
+
+/* Icon/segment buttons sit >= 16px in from the screen edge so they never collide with
+   iOS back-swipe or Android gesture nav (12 §4). */
+.iconbtn {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--ink2);
+  min-width: var(--tap);
+  min-height: var(--tap);
+  border-radius: var(--r-sm);
+  font: 600 var(--t-micro) / 1 var(--mono);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.iconbtn:hover {
+  background: var(--card2);
+  color: var(--ink);
+}
+.iconbtn[aria-pressed='true'] {
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------------------------
+   The dock — one component, four positions (12 §3, 13 §5.2)
+   --------------------------------------------------------------------------- */
+
+.dock {
+  position: absolute;
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  /* Opaque, never backdrop-filter: a full-screen blur costs a pass every frame on the
+     phone we gate on, and still loses to a specular highlight (13 §6). */
+}
+
+/* Desktop: a 320px panel pinned left, clear of the top bar. */
+#app.desktop .dock {
+  top: calc(48px + var(--safe-t) + var(--s5));
+  left: calc(var(--s5) + var(--safe-l));
+  width: 320px;
+  border-radius: var(--r-md);
+  padding: var(--s4);
+}
+
+/* Tablet: same idea, tighter, touch-sized. */
+#app.tablet .dock {
+  top: calc(48px + var(--safe-t) + var(--s4));
+  left: calc(var(--s4) + var(--safe-l));
+  width: 300px;
+  border-radius: var(--r-md);
+  padding: var(--s4);
+}
+
+/* Phone portrait: bottom sheet. §8's study puts this at 264px + safe area = ~35% of a
+   390x844 viewport, inside the <=40% rule. */
+#app.phone-portrait .dock {
+  inset: auto 0 0 0;
+  border-width: var(--hair) 0 0 0;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  padding: var(--s2) calc(var(--s4) + var(--safe-r)) calc(var(--s4) + var(--safe-b))
+    calc(var(--s4) + var(--safe-l));
+  gap: var(--s2);
+}
+
+/* Phone landscape: right rail. A bottom sheet would eat a 390px-tall viewport. */
+#app.phone-landscape .dock {
+  inset: calc(40px + var(--safe-t)) 0 0 auto;
+  width: 280px;
+  border-width: 0 0 0 var(--hair);
+  padding: var(--s3) calc(var(--s3) + var(--safe-r)) calc(var(--s3) + var(--safe-b)) var(--s3);
+  overflow-y: auto;
+  gap: var(--s2);
+}
+
+/* The grab handle only exists on the sheet. */
+.dock .handle {
+  display: none;
+}
+#app.phone-portrait .dock .handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line2);
+  margin: 0 auto var(--s1);
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Controls (13 §5.4)
+   --------------------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.label-row .k {
+  font: 600 var(--t-micro) / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.label-row .v {
+  font: 600 var(--t-sm) / 1.2 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Metal picker: the swatches carry TRUE material colour, which is the one place the UI
+   shows real material colour, so the selection ring is ink rather than accent (13 §2.1). */
+.metals {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--s2);
+}
+.metal {
+  appearance: none;
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-sm);
+  background: var(--swatch, var(--card2));
+  min-height: 44px;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.metal span {
+  font: 600 var(--t-micro) / 1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--on-swatch, var(--ink));
+  padding-bottom: 3px;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
+}
+.metal[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+/* Sliders. The drawn thumb is 20px; the HIT area is 44px regardless (12 §4). */
+.slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+.slider input[type='range'] {
+  appearance: none;
+  width: 100%;
+  height: var(--tap);
+  background: none;
+  margin: 0;
+  cursor: pointer;
+}
+.slider input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--r-sm);
+  background: var(--bg2);
+  border: var(--hair) solid var(--line);
+}
+.slider input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: var(--r-sm);
+  background: var(--bg2);
+  border: var(--hair) solid var(--line);
+}
+.slider input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -9px;
+  border-radius: var(--r-sm);
+  background: var(--ink);
+  border: var(--hair) solid var(--bg);
+}
+.slider input[type='range']::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  background: var(--ink);
+  border: var(--hair) solid var(--bg);
+}
+
+/* ASTM ticks (90 / 92.5 / 95 / 97) drawn under the track. */
+.slider .ticks {
+  position: absolute;
+  inset: 50% 10px auto 10px;
+  height: 0;
+  pointer-events: none;
+}
+.slider .ticks i {
+  position: absolute;
+  top: 4px;
+  width: 1px;
+  height: 7px;
+  background: var(--line2);
+}
+
+/* Value bubble: on touch the thumb hides the value, so it goes above (12 §4). */
+.slider .bubble {
+  position: absolute;
+  bottom: calc(100% - 6px);
+  transform: translateX(-50%);
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  font: 600 var(--t-sm) / 1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--dur-fade) linear;
+  pointer-events: none;
+}
+.slider.dragging .bubble {
+  opacity: 1;
+}
+
+/* Size preset chips. Hidden on phone-portrait, where the study showed a sixth 44px row
+   pushes the sheet past 40% — the presets become slider ticks there instead (13 §8). */
+.chips {
+  display: flex;
+  gap: var(--s1);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar {
+  display: none;
+}
+#app.phone-portrait .chips {
+  display: none;
+}
+.chip {
+  appearance: none;
+  flex: none;
+  scroll-snap-align: start;
+  background: var(--card2);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--ink2);
+  font: 600 var(--t-sm) / 1 var(--mono);
+  padding: var(--s2) var(--s3);
+  min-height: 32px;
+  cursor: pointer;
+}
+.chip[aria-pressed='true'] {
+  background: var(--tung);
+  border-color: var(--tung);
+  color: var(--bg);
+}
+
+/* The one primary action, and one of the four accent uses. */
+.primary {
+  appearance: none;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--acc);
+  color: var(--on-acc);
+  font: 600 var(--t-base) / 1 var(--body);
+  min-height: 48px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.primary:active {
+  background: var(--acc2);
+}
+
+.class-chip {
+  font: 600 var(--t-micro) / 1.3 var(--mono);
+  letter-spacing: 0.1em;
+  /* NOT uppercase. This chip carries "ρ 18.00 g/cm³", and text-transform: uppercase
+     turns Greek rho into capital Rho — which renders as a Latin "P", so the density
+     label reads "P 18.00". Unit symbols are not decoration and must not be transformed. */
+  color: var(--ink2);
+  background: var(--card2);
+  border: var(--hair) solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Info card (13 §5.1)
+   --------------------------------------------------------------------------- */
+
+.infocard {
+  position: absolute;
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+#app.desktop .infocard,
+#app.tablet .infocard {
+  top: calc(48px + var(--safe-t) + var(--s5));
+  right: calc(var(--s5) + var(--safe-r));
+}
+#app.phone-portrait .infocard {
+  left: var(--s4);
+  right: var(--s4);
+  width: auto;
+  bottom: calc(100% - 100%);
+  bottom: var(--infocard-bottom, 300px);
+}
+#app.phone-landscape .infocard {
+  top: calc(40px + var(--safe-t) + var(--s3));
+  right: calc(280px + var(--s3) + var(--safe-r));
+  width: 240px;
+}
+/* Four spec cells will NOT fit across a 280px card: "18.00 g/cm³" alone wants ~90px
+   against a 70px column, and `.val` is nowrap, so the readings collide. Two rows. */
+.infocard .cells {
+  grid-auto-flow: row;
+  grid-template-columns: 1fr 1fr;
+  row-gap: var(--s2);
+}
+.infocard .cell:nth-child(2n + 1) {
+  border-left: none;
+  padding-left: 0;
+}
+.infocard .cell:nth-child(n + 3) {
+  border-top: var(--hair) solid var(--line);
+  padding-top: var(--s2);
+}
+
+.infocard .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.infocard .metal-name {
+  font: 600 var(--t-base) / 1.2 var(--body);
+  color: var(--ink);
+}
+.infocard .twin {
+  font: 400 var(--t-sm) / 1.4 var(--body);
+  color: var(--ink2);
+  border-top: var(--hair) solid var(--line);
+  padding-top: var(--s2);
+}
+.infocard .twin b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Force meter (13 §5.3) — the most design-critical element in the MVP
+   --------------------------------------------------------------------------- */
+
+.meter {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fade) linear;
+  /* The one sanctioned shadow use: this genuinely floats over the render (13 §6). */
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.6));
+}
+.meter.on {
+  opacity: 1;
+}
+.meter circle {
+  fill: none;
+  stroke-linecap: round;
+}
+.meter .track {
+  stroke: var(--line2);
+  stroke-opacity: 0.4;
+  stroke-width: 3;
+}
+.meter .fill {
+  stroke: var(--ink);
+  stroke-width: 3;
+  /* NO transition on the fill. It is an instrument reading a real clamped force, and
+     easing it would make it lie (13 §5.3). Only the colour eases. */
+  transition: stroke var(--dur-color) linear;
+}
+.meter.warn .fill {
+  stroke: var(--warn);
+}
+.meter.clamped .fill {
+  stroke: var(--acc);
+  stroke-width: 4;
+}
+
+/* ---------------------------------------------------------------------------
+   Long-press ring + toast
+   --------------------------------------------------------------------------- */
+
+.press-ring {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.6));
+}
+.press-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+.press-ring .track {
+  stroke: var(--scrim);
+}
+.press-ring .fill {
+  stroke: var(--acc);
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--s5) + var(--safe-b));
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-md);
+  padding: var(--s2) var(--s4);
+  font: 400 var(--t-base) / 1.3 var(--body);
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity var(--dur-fade) linear;
+  pointer-events: none;
+  max-width: min(80vw, 420px);
+  text-align: center;
+}
+.toast.on {
+  opacity: 1;
+}
+#app.phone-portrait .toast {
+  bottom: calc(var(--dock-height, 280px) + var(--s3));
+}
+
+/* ---------------------------------------------------------------------------
+   Lab panel — labs mount their own controls here (08 §9)
+   --------------------------------------------------------------------------- */
+
+.labpanel {
+  position: absolute;
+}
+#app.desktop .labpanel,
+#app.tablet .labpanel {
+  left: calc(var(--s5) + var(--safe-l));
+  bottom: calc(var(--s5) + var(--safe-b));
+}
+#app.phone-portrait .labpanel {
+  left: var(--s4);
+  bottom: calc(var(--dock-height, 280px) + var(--s3));
+}
+#app.phone-landscape .labpanel {
+  left: calc(var(--s3) + var(--safe-l));
+  bottom: calc(var(--s3) + var(--safe-b));
+}
+.labpanel-inner {
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.labpanel .k {
+  font: 600 var(--t-micro) / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.lineup-buttons {
+  display: flex;
+  gap: var(--s2);
+}
+.lineup-buttons .chip {
+  min-height: var(--tap);
+}

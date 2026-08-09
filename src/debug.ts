@@ -86,7 +86,7 @@ async function mountStats(app: App): Promise<void> {
     const Stats = mod.default;
     const stats = new Stats({ trackGPU: true, horizontal: false });
     await stats.init(app.render.renderer);
-    stats.dom.style.cssText = 'position:fixed;top:0;left:0;z-index:10;opacity:.85';
+    stats.dom.style.cssText = 'position:fixed;bottom:0;left:0;z-index:10;opacity:.85';
     document.body.appendChild(stats.dom);
     const tick = (): void => {
       stats.update();
