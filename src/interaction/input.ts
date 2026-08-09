@@ -32,6 +32,12 @@ export interface InputCallbacks {
   /** First gesture of the session — the iOS AudioContext unlock (08 §8.7). */
   onFirstGesture(): void;
   onResetRequest(): void;
+  /**
+   * Long-press progress, 0..1, at a screen point — or null when it stops.
+   * 450 ms of nothing feels like a dead app, and the ring also teaches that the
+   * gesture exists at all (12 §4).
+   */
+  onLongPressProgress(progress: number, screen: { x: number; y: number } | null): void;
 }
 
 export class InputRouter {
@@ -41,6 +47,7 @@ export class InputRouter {
   readonly #hitPoint = new THREE.Vector3();
   #firstGestureDone = false;
   #longPressTimer: number | null = null;
+  #longPressRaf: number | null = null;
   #lastTapT = 0;
   #lastTapX = 0;
   #lastTapY = 0;
@@ -349,8 +356,20 @@ export class InputRouter {
 
   #armLongPress(clientX: number, clientY: number): void {
     this.#clearLongPress();
+    const started = performance.now();
+    // Drive the fill ring off rAF rather than the timer, so it tracks real elapsed time
+    // even if a frame is late.
+    const tick = (): void => {
+      if (this.#longPressTimer === null) return;
+      const p = Math.min(1, (performance.now() - started) / config.input.longPressMs);
+      this.cb.onLongPressProgress(p, { x: clientX, y: clientY });
+      if (p < 1) this.#longPressRaf = requestAnimationFrame(tick);
+    };
+    this.#longPressRaf = requestAnimationFrame(tick);
+
     this.#longPressTimer = window.setTimeout(() => {
       this.#longPressTimer = null;
+      this.cb.onLongPressProgress(0, null);
       // Spawn where they pressed: intersect the floor plane rather than guessing.
       const ray = this.#pickRay(clientX, clientY);
       const hit = this.physics.raycast(ray.origin, ray.direction);
@@ -364,6 +383,11 @@ export class InputRouter {
     if (this.#longPressTimer !== null) {
       clearTimeout(this.#longPressTimer);
       this.#longPressTimer = null;
+      this.cb.onLongPressProgress(0, null);
+    }
+    if (this.#longPressRaf !== null) {
+      cancelAnimationFrame(this.#longPressRaf);
+      this.#longPressRaf = null;
     }
   }
 

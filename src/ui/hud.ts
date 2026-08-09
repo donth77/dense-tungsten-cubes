@@ -3,6 +3,7 @@ import { button, el, setText } from './dom.ts';
 import { InfoCard } from './infocard.ts';
 import { LayoutManager } from './layout.ts';
 import { ForceMeter } from './meter.ts';
+import { PressRing } from './pressring.ts';
 import { Spawner } from './spawner.ts';
 import type { SpawnerCallbacks } from './spawner.ts';
 import type { SettingsStore } from './settings.ts';
@@ -15,9 +16,12 @@ import type { LayoutState } from './layout.ts';
  * imports nothing from `core/`, which is what keeps `ui/` testable as plain DOM (08 §5.2).
  */
 
+export type HandModeId = 'one' | 'two' | 'forklift';
+
 export interface HudCallbacks extends SpawnerCallbacks {
   onResetView(): void;
   onLabChange(lab: 'sandbox' | 'weigh'): void;
+  onHandMode(mode: HandModeId): void;
 }
 
 export class Hud {
@@ -25,11 +29,16 @@ export class Hud {
   readonly spawner: Spawner;
   readonly infocard: InfoCard;
   readonly meter: ForceMeter;
+  readonly pressRing: PressRing;
 
   readonly #toast: HTMLElement;
   #toastTimer: number | null = null;
   readonly #unitsBtn: HTMLElement;
   readonly #soundBtn: HTMLElement;
+  readonly #handBtn: HTMLElement;
+  #handMode: HandModeId = 'one';
+  /** The forklift is an easter egg, not a feature — it stays hidden until found. */
+  #forkliftUnlocked = false;
   /** Where labs mount their own panel (08 §9). */
   readonly labPanel: HTMLElement;
 
@@ -43,6 +52,7 @@ export class Hud {
     this.spawner = new Spawner(settings, cb);
     this.infocard = new InfoCard(settings);
     this.meter = new ForceMeter();
+    this.pressRing = new PressRing();
     this.labPanel = el('div.labpanel');
 
     this.#unitsBtn = button('KG', () => this.settings.toggleUnits(), {
@@ -55,6 +65,19 @@ export class Hud {
       'aria-label': 'Mute',
       title: 'Sound',
     });
+
+    /*
+     * Hand mode. 08 §11 step 17 proposed long-pressing the meter to unlock the forklift,
+     * but the meter is `pointer-events: none` and only exists while you are already
+     * holding something — it cannot receive a press. This button carries the same idea:
+     * tap cycles one/two hands, and a long press finds the 50 kN forklift.
+     */
+    this.#handBtn = button('1H', () => this.#cycleHand(), {
+      class: 'iconbtn',
+      'aria-label': 'Grip strength',
+      title: 'Grip: one hand (350 N)',
+    });
+    this.#bindForkliftUnlock();
 
     const tabs = el(
       'div.tabs',
@@ -85,12 +108,14 @@ export class Hud {
           'aria-label': 'Reset view',
           title: 'Reset view',
         }),
+        this.#handBtn,
         this.#unitsBtn,
         this.#soundBtn,
       ),
       this.spawner.root,
       this.infocard.root,
       this.meter.root,
+      this.pressRing.root,
       this.labPanel,
       this.#toast,
     );
@@ -106,6 +131,51 @@ export class Hud {
     // driven, so it is measured rather than assumed.
     this.layout.subscribe(() => this.#syncSheetMetrics());
     requestAnimationFrame(() => this.#syncSheetMetrics());
+  }
+
+  #cycleHand(): void {
+    const order: HandModeId[] = this.#forkliftUnlocked
+      ? ['one', 'two', 'forklift']
+      : ['one', 'two'];
+    const next = order[(order.indexOf(this.#handMode) + 1) % order.length] ?? 'one';
+    this.setHandMode(next);
+    this.cb.onHandMode(next);
+  }
+
+  setHandMode(mode: HandModeId): void {
+    this.#handMode = mode;
+    const label = mode === 'one' ? '1H' : mode === 'two' ? '2H' : 'FL';
+    const title =
+      mode === 'one'
+        ? 'Grip: one hand (350 N)'
+        : mode === 'two'
+          ? 'Grip: two hands (700 N)'
+          : 'Grip: forklift (50 kN)';
+    setText(this.#handBtn, label);
+    this.#handBtn.setAttribute('title', title);
+    this.#handBtn.classList.toggle('forklift', mode === 'forklift');
+  }
+
+  #bindForkliftUnlock(): void {
+    let timer: number | null = null;
+    const start = (): void => {
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (this.#forkliftUnlocked) return;
+        this.#forkliftUnlocked = true;
+        this.setHandMode('forklift');
+        this.cb.onHandMode('forklift');
+        this.toast('Forklift unlocked — 50 kN. Nothing is heavy now.');
+      }, 700);
+    };
+    const stop = (): void => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
+    this.#handBtn.addEventListener('pointerdown', start);
+    this.#handBtn.addEventListener('pointerup', stop);
+    this.#handBtn.addEventListener('pointercancel', stop);
+    this.#handBtn.addEventListener('pointerleave', stop);
   }
 
   get layoutState(): Readonly<LayoutState> {

@@ -104,12 +104,16 @@ export class CameraRig {
    */
   frameRadius(radiusM: number): void {
     const vFov = (config.camera.fovDeg * Math.PI) / 180;
-    // Fit the radius vertically with a little air, and never leave the clamp range.
-    this.#goal.distM = clamp(
+    const aspect = this.camera.aspect || 1;
+    // Fit BOTH axes. Fitting only the vertical looks right on a 16:9 desktop and then
+    // hangs a lab's mats off both sides of a portrait phone, where the horizontal field
+    // of view is the narrow one.
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+    const needed = Math.max(
       (radiusM * 1.25) / Math.tan(vFov / 2),
-      config.camera.distMinM,
-      config.camera.distMaxM,
+      (radiusM * 1.25) / Math.tan(hFov / 2),
     );
+    this.#goal.distM = clamp(needed, config.camera.distMinM, config.camera.distMaxM);
     this.#goal.target.set(config.camera.target.x, radiusM * 0.12, config.camera.target.z);
   }
 

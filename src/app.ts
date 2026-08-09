@@ -64,6 +64,7 @@ export class App implements Stepper {
         onSpawnRequest: (at) => this.spawn(at ? { x: at.x, y: at.y, z: at.z } : undefined),
         onFirstGesture: () => void this.audio.unlock(),
         onResetRequest: () => this.reset(),
+        onLongPressProgress: (p, at) => this.hud.pressRing.update(p, at),
       },
     );
 
@@ -86,6 +87,7 @@ export class App implements Stepper {
       onSpecChange: (spec) => this.#onSpecChange(spec),
       onResetView: () => this.rig.reset(this.spec.sideM),
       onLabChange: (lab) => void this.labs.switchTo(lab),
+      onHandMode: (mode) => this.hand.setMode(mode),
     });
 
     this.bus.on('select', ({ id }) => this.#select(id));

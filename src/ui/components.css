@@ -167,6 +167,10 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s2);
+  /* The purity row carries a class chip AND a density AND a percentage. On a 390px
+     sheet that is genuinely too much for one line, and wrapping is honest where
+     abbreviating the unit away would not be. */
+  flex-wrap: wrap;
 }
 .label-row .k {
   font: 600 var(--t-micro) / 1.2 var(--mono);
@@ -552,4 +556,9 @@
 }
 .lineup-buttons .chip {
   min-height: var(--tap);
+}
+
+/* Forklift is an easter egg; once found it says so. */
+.iconbtn.forklift {
+  color: var(--acc);
 }

@@ -232,6 +232,18 @@ export class PhysicsWorld {
     const rec = this.#recs.get(h);
     if (!rec) return;
     rec.collider.setDensity(kgPerM3);
+    /*
+     * The recompute is NOT optional. Rapier propagates a collider's mass properties to
+     * its body "at the next physics step, or manually via
+     * recomputeMassPropertiesFromColliders" — so reading `body.mass()` straight after
+     * setDensity returns the OLD mass, and whatever we cache from it stays wrong.
+     *
+     * That produced the worst possible failure mode for this product: dragging the
+     * purity slider updated the info card (which derives mass from the spec) while the
+     * simulation kept the old mass. The number on screen and the thing on screen would
+     * have disagreed, which is pillar 2 (01) inverted.
+     */
+    rec.body.recomputeMassPropertiesFromColliders();
     rec.massKg = rec.body.mass();
   }
 
