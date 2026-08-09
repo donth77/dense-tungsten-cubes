@@ -12,3 +12,9 @@ dist/
 
 # docs/ is intentionally TRACKED — it is the entire project right now (11 design docs,
 # the interactive dossier, and the asset attribution log). Un-ignored 2026-08-09.
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright-mcp/

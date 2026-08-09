@@ -1,0 +1,10 @@
+dist/
+node_modules/
+package-lock.json
+test-results/
+playwright-report/
+
+# docs/ is authored prose, not code. Prettier reflows its tables and rewrites emphasis
+# and embedded code samples, which renders identically but buries real edits under
+# hundreds of lines of formatting churn in every diff. Formatting there is a human call.
+docs/

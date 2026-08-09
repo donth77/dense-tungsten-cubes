@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero. Without it the
+         notch and home indicator silently eat UI (12 §2). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0f151c" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="A browser physics toy about density. Tungsten cubes, weighed, dropped and sunk."
+    />
+    <title>Dense</title>
+
+    <!-- Critical shell CSS, inline so the loading state paints before any JS arrives.
+         Everything else is imported from main.ts (13 §9). -->
+    <style>
+      :root {
+        --safe-t: env(safe-area-inset-top, 0px);
+        --safe-b: env(safe-area-inset-bottom, 0px);
+        --safe-l: env(safe-area-inset-left, 0px);
+        --safe-r: env(safe-area-inset-right, 0px);
+        --boot-bg: #0f151c;
+        --boot-ink: #6d7a86;
+        --boot-line: #2e3945;
+        --boot-acc: #ff6b1f;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--boot-bg);
+        /* Android pull-to-refresh mid-drag, and iOS rubber-banding while orbiting. */
+        overscroll-behavior: none;
+      }
+      #app {
+        height: 100vh; /* fallback for anything below the browser floor */
+        height: 100dvh; /* tracks the mobile toolbar — NOT 100vh (12 §2) */
+        position: relative;
+        overflow: hidden;
+      }
+      canvas#stage {
+        display: block;
+        width: 100%;
+        height: 100%;
+        /* Kills double-tap zoom, pan-scroll, and the browser stealing a drag. */
+        touch-action: none;
+      }
+      #boot,
+      .failcard {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 14px;
+        justify-items: center;
+        padding: 24px;
+        text-align: center;
+        font:
+          600 9.5px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--boot-ink);
+        background: var(--boot-bg);
+      }
+      .failcard {
+        display: none;
+      }
+      .failcard p {
+        font:
+          400 14px/1.6 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        letter-spacing: 0;
+        text-transform: none;
+        max-width: 34ch;
+        color: #9aa7b2;
+      }
+      .failcard b {
+        color: #dbe3ea;
+      }
+      #boot .rule {
+        width: 120px;
+        height: 1px;
+        background: var(--boot-line);
+        position: relative;
+        overflow: hidden;
+      }
+      #boot .rule::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        width: 34%;
+        background: var(--boot-acc);
+        animation: sweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+      @keyframes sweep {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(394%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot .rule::after {
+          animation: none;
+          width: 100%;
+          opacity: 0.4;
+        }
+      }
+      /* Dragging a label must not select text instead of moving the camera. It must
+         also not summon iOS's long-press callout, which collides with our 450 ms
+         long-press spawn (12 §2). */
+      #ui {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      #ui > * {
+        pointer-events: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="stage"></canvas>
+      <div id="ui"></div>
+
+      <div id="boot">
+        <div>Dense</div>
+        <div class="rule"></div>
+        <div>Loading</div>
+      </div>
+
+      <!-- Failure cards (08 §16.3). Plain HTML, revealed by feature detection, so they
+           render even when the thing that failed is the thing that would draw them. -->
+      <div class="failcard" id="fail-webgl">
+        <div>Dense</div>
+        <p>
+          This toy needs <b>WebGL 2</b>, which this browser doesn't have. Chrome or Edge 113+,
+          Safari 16.4+, or Firefox 115+ will run it.
+        </p>
+      </div>
+      <div class="failcard" id="fail-physics">
+        <div>Dense</div>
+        <p>The physics engine failed to load. <b>Reload the page</b> to try again.</p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

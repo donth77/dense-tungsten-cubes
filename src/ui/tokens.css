@@ -1,0 +1,160 @@
+/**
+ * Design tokens — 13-ui-design.md §2–4.
+ *
+ * Extracted from the dossier's palette (docs/index.html), not invented. The app runs
+ * the dark "blueprint" set: it is a viewport, not a document, and bright chrome around
+ * a dim test chamber fights the render for attention.
+ *
+ * The light set is written and correct but NOT gated for MVP — it turns on at the V1
+ * a11y pass, alongside the contrast audit and the stage backdrop that must track it.
+ */
+
+:root {
+  /* ---- surfaces: darkest -> lightest ---- */
+  --bg: #0f151c; /* app ground */
+  --bg2: #141b23; /* recessed wells, slider tracks */
+  --card: #1b232d; /* panel body */
+  --card2: #161e27; /* nested cell, pressed state */
+
+  /* ---- ink: primary -> tertiary ---- */
+  --ink: #dbe3ea;
+  --ink2: #9aa7b2;
+  --ink3: #6d7a86;
+
+  /* ---- lines ---- */
+  --line: #2e3945; /* hairline dividers inside a panel */
+  --line2: #49575f; /* panel borders */
+
+  /* ---- material & semantic ---- */
+  --tung: #9aa3ad; /* the tungsten grey — material identity, wordmark */
+  --acc: #ff6b1f; /* THE accent. Spent in four places only (13 §2.1) */
+  --acc2: #ff8747;
+  --on-acc: #16100b;
+  --blue: #82b3da;
+  --ok: #58b573;
+  --warn: #d9a13c;
+  --bad: #e06152;
+  --scrim: rgb(15 21 28 / 0.72); /* behind floating UI over the canvas (13 §6) */
+
+  /* ---- type ----
+     One webfont ships in the MVP: the numbers are the product. The display face is
+     deferred to M3, when verdict stamps give it a job (13 §3).
+     TODO(M0): drop the subsetted IBM Plex Mono woff2 into public/fonts/ and add the
+     @font-face + <link rel=preload>. Until then the ui-monospace fallback is used and
+     nothing else has to change. */
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --body:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --disp: var(--mono); /* -> 'Big Shoulders' at M3 */
+
+  /* rem-based so OS text scaling works (12 §8) */
+  --t-micro: 0.594rem; /* uppercase micro-labels, .14em tracking */
+  --t-sm: 0.75rem;
+  --t-base: 0.875rem;
+  --t-val: 1.0625rem;
+  --t-lg: 1.5rem;
+
+  /* ---- space, size, shape ---- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --r-sm: 2px; /* chips, inputs — machined, not soft */
+  --r-md: 3px; /* panels, buttons */
+  --tap: 44px; /* minimum hit target, every layout */
+  --hair: 1px; /* the engineering-drawing rule weight */
+
+  /* ---- motion (13 §7) ---- */
+  --dur-sheet: 180ms;
+  --dur-fade: 120ms;
+  --dur-color: 80ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1); /* decisive, no overshoot */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-sheet: 0ms;
+    --dur-fade: 0ms;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Primitives. Components live in their own files; this is only what every one
+   of them needs.
+   --------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#ui {
+  font: 400 var(--t-base) / 1.5 var(--body);
+  color: var(--ink);
+}
+
+/* Accessibility overrides taste — one of the four sanctioned accent uses. */
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+/* Every digit in the app. A readout that shifts width as the purity slider moves
+   reads as broken (13 §3). */
+.num,
+.val,
+.k {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The spec cell — the signature component (13 §5.1). The engineering title block,
+   and also the exact shape of the SI-primary / imperial-subtitle rule (08 §2.3). */
+.cells {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+}
+.cell {
+  padding: var(--s2) var(--s3);
+  border-left: var(--hair) solid var(--line);
+  min-width: 0;
+}
+.cell:first-child {
+  border-left: none;
+  padding-left: 0;
+}
+.cell .k {
+  font: 600 var(--t-micro) / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-bottom: 2px;
+}
+.cell .val {
+  font: 600 var(--t-val) / 1.25 var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.cell .val2 {
+  font: 400 var(--t-sm) / 1.35 var(--mono);
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+/* Panels are opaque, never frosted: a full-screen blur costs a pass every frame on
+   exactly the phone we gate on, and it still fails against a specular highlight
+   because it preserves luminance (13 §6). */
+.panel {
+  background: var(--card);
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-md);
+  padding: var(--s4);
+}
+
+/* The one sanctioned shadow use: elements that genuinely float over the render. */
+.floating {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.6));
+}
