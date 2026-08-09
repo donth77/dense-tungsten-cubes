@@ -18,3 +18,7 @@ test-results/
 playwright-report/
 blob-report/
 .playwright-mcp/
+
+docs/
+test-screenshots
+*.png
