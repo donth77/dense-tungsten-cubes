@@ -17,6 +17,11 @@ import { SettingsStore } from './ui/settings.ts';
 import type { CubeSpec, EntityId, ImpactEvent, MetalId, Vec3 } from './types.ts';
 import type { ActionId } from './interaction/bindings.ts';
 
+/** One key press is worth this much pointer travel — key repeat does the rest. */
+const KEY_ORBIT_PX = 18;
+const KEY_PAN_PX = 24;
+const KEY_ZOOM = 90;
+
 /**
  * App — the composition root (08 §4). Constructs and wires every system, and owns the
  * frame loop. Nothing else knows how the pieces fit together.
@@ -168,6 +173,38 @@ export class App implements Stepper {
       case 'dismiss':
         if (this.hud.help.isOpen) this.hud.help.close();
         else this.#select(null);
+        break;
+      // Keyboard camera control. The canvas was completely keyboard-dead before this:
+      // a keyboard-only visitor could spawn a cube and never look at it from any angle.
+      case 'orbitLeft':
+        this.rig.orbit(-KEY_ORBIT_PX, 0);
+        break;
+      case 'orbitRight':
+        this.rig.orbit(KEY_ORBIT_PX, 0);
+        break;
+      case 'orbitUp':
+        this.rig.orbit(0, -KEY_ORBIT_PX);
+        break;
+      case 'orbitDown':
+        this.rig.orbit(0, KEY_ORBIT_PX);
+        break;
+      case 'panLeft':
+        this.rig.pan(-KEY_PAN_PX, 0);
+        break;
+      case 'panRight':
+        this.rig.pan(KEY_PAN_PX, 0);
+        break;
+      case 'panUp':
+        this.rig.pan(0, -KEY_PAN_PX);
+        break;
+      case 'panDown':
+        this.rig.pan(0, KEY_PAN_PX);
+        break;
+      case 'zoomIn':
+        this.rig.dolly(-KEY_ZOOM);
+        break;
+      case 'zoomOut':
+        this.rig.dolly(KEY_ZOOM);
         break;
       case 'metal1':
       case 'metal2':

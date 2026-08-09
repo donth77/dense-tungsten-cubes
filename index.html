@@ -3,11 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero. Without it the
-         notch and home indicator silently eat UI (12 §2). -->
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
-    />
+         notch and home indicator silently eat UI (12 §2).
+
+         NO user-scalable=no. It was here to stop double-tap zoom fighting the canvas,
+         but `touch-action: none` on the canvas already does that — and blocking pinch
+         zoom takes the primary magnification tool away from anyone with low vision
+         (WCAG 1.4.4). Android honours the flag even though iOS has ignored it since
+         iOS 10, so this was a real barrier on half of mobile. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f151c" />
     <!-- Inline so there is no favicon request to 404. A dark cube with a lit top face,
          which is the whole product in 16 px. -->
@@ -142,12 +145,14 @@
   </head>
   <body>
     <div id="app">
+      <!-- role=application is deliberately NOT used: it suppresses screen-reader
+           browse mode, and the panels are ordinary controls that should stay readable. -->
       <canvas id="stage" aria-label="Physics stage: metal cubes on a concrete floor" role="img">
         An interactive 3D stage where metal cubes can be dropped and picked up. The controls beside
         it work without the stage: use the spawner to choose a metal, purity and size, and the panel
         reports each cube's mass, density and volume.
       </canvas>
-      <div id="ui"></div>
+      <main id="ui" aria-label="Controls"></main>
 
       <div id="boot">
         <div>Dense</div>

@@ -405,7 +405,7 @@ export class InputRouter {
 
     this.cb.onKeyboardUsed();
 
-    const action = actionForCode(e.code);
+    const action = actionForCode(e.code, e.shiftKey);
     if (!action) return;
     // Space scrolls and '/' opens quick-find if we don't claim them.
     e.preventDefault();

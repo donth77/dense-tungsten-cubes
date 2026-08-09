@@ -20,7 +20,17 @@ export type ActionId =
   | 'metal2'
   | 'metal3'
   | 'metal4'
-  | 'metal5';
+  | 'metal5'
+  | 'orbitLeft'
+  | 'orbitRight'
+  | 'orbitUp'
+  | 'orbitDown'
+  | 'panLeft'
+  | 'panRight'
+  | 'panUp'
+  | 'panDown'
+  | 'zoomIn'
+  | 'zoomOut';
 
 export interface KeyBinding {
   /** `KeyboardEvent.code` values that trigger this. */
@@ -62,6 +72,27 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
     action: 'cycleGrip',
     description: 'Cycle grip strength',
     group: 'Cubes',
+  },
+  {
+    codes: ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'],
+    label: '← ↑ ↓ →',
+    action: 'orbitLeft',
+    description: 'Orbit the camera',
+    group: 'Camera',
+  },
+  {
+    codes: [],
+    label: 'Shift + arrows',
+    action: 'panLeft',
+    description: 'Pan across the stage',
+    group: 'Camera',
+  },
+  {
+    codes: ['Equal', 'Minus'],
+    label: '+ / −',
+    action: 'zoomIn',
+    description: 'Zoom in and out',
+    group: 'Camera',
   },
   {
     codes: ['KeyF'],
@@ -143,11 +174,24 @@ export const TOUCH_GESTURES: readonly GestureHelp[] = [
   { label: 'Press and hold the floor', description: 'Spawn a cube right there', group: 'Cubes' },
 ];
 
+const ARROWS: Record<string, string> = {
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+};
+
 export const CONTROL_GROUPS: readonly ControlGroup[] = ['Cubes', 'Camera', 'Display'];
 
 /** Resolves a `KeyboardEvent.code` to an action, honouring the 1–5 metal row. */
-export function actionForCode(code: string): ActionId | null {
+export function actionForCode(code: string, shift = false): ActionId | null {
   if (/^Digit[1-5]$/.test(code)) return `metal${code.slice(-1)}` as ActionId;
+  // Arrows orbit, or pan with Shift. Handled here so the help table and the router
+  // can never disagree about which is which.
+  const arrow = ARROWS[code];
+  if (arrow) return (shift ? `pan${arrow}` : `orbit${arrow}`) as ActionId;
+  if (code === 'Equal') return 'zoomIn';
+  if (code === 'Minus') return 'zoomOut';
   for (const b of KEY_BINDINGS) {
     if (b.codes.includes(code)) return b.action;
   }
