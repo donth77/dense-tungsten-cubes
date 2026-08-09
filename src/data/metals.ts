@@ -105,6 +105,38 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     restitution: 0.2, // dense, internally damped — the dead TUNK material
     restitutionRule: 'min',
   },
+  /**
+   * Gold — 19,320 kg/m³ against tungsten heavy alloy's 17,000–18,500.
+   *
+   * It is in this toy for exactly one reason: **pure tungsten is 19,250 kg/m³ and gold
+   * is 19,320.** A 0.4 % difference is why gold-plated tungsten is the classic bullion
+   * fraud, and why a hand can be fooled by it. Put the two cubes side by side at the
+   * same size and the scale reads the same number twice — which is the most surprising
+   * thing a density toy can do, and it needs no explanation beyond the two objects.
+   *
+   * Note the gap the purity slider opens: the *alloy* in this app is 90–97 % W, so a
+   * W95 cube is ~7 % lighter than gold. Only pure tungsten actually matches, which is
+   * itself the honest version of the story (01 pillar 2).
+   */
+  Au: {
+    id: 'Au',
+    label: 'Gold',
+    symbol: 'Au',
+    atomicNumber: 79,
+    atomicMass: 196.967,
+    densityKgM3: 19_320,
+    baseColorLinear: [1.0, 0.782, 0.344],
+    roughness: 0.22, // takes and holds a mirror polish better than the others
+    friction: 0.45,
+    /*
+     * The deadest material in the set, below even WHA. Gold is Mohs 2.5 and famously
+     * ductile — an impact spends its energy deforming the corner rather than returning
+     * it. That is the payoff of pairing it with tungsten: two cubes of near-identical
+     * mass that land completely differently, so the ear separates what the hand cannot.
+     */
+    restitution: 0.15,
+    restitutionRule: 'min',
+  },
   Cu: {
     id: 'Cu',
     label: 'Copper',

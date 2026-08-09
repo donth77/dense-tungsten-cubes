@@ -20,8 +20,17 @@ const MAT_THICK_M = 0.02;
 const MAT_SPACING_M = 0.2;
 const MAT_Z_M = -0.26;
 
-/** The 1 kg set (02 §4). Sides chosen so every cube weighs the same to 3 digits. */
-const SAME_MASS_IN: readonly (readonly [MetalId, number])[] = [
+/**
+ * The 1 kg set (02 §4). Sides chosen so every cube weighs the same to 3 digits, and
+ * ordered smallest to largest so the size gradient IS the density gradient.
+ *
+ * Gold leads, which is the whole reason it is worth having in this line-up: at 19,320
+ * it is denser than any heavy-alloy grade the purity slider reaches, so a kilo of gold
+ * is physically smaller than a kilo of tungsten cube. The one place the toy can show
+ * that is right here, at the head of the row.
+ */
+export const SAME_MASS_IN: readonly (readonly [MetalId, number])[] = [
+  ['Au', 1.47],
   ['W', 1.5],
   ['Cu', 1.9],
   ['Fe', 1.98],
@@ -29,7 +38,8 @@ const SAME_MASS_IN: readonly (readonly [MetalId, number])[] = [
   ['Al', 2.83],
 ];
 
-const LINEUP_METALS: readonly MetalId[] = ['W', 'Cu', 'Fe', 'Ti', 'Al'];
+/** Same order as the spawner's swatch row, so the two never disagree. */
+export const LINEUP_METALS: readonly MetalId[] = ['W', 'Au', 'Cu', 'Fe', 'Ti', 'Al'];
 const LINEUP_SPACING_M = 0.085;
 /** Everything the lab lays out fits inside this radius of the stage centre. */
 const STAGE_RADIUS_M = 0.55;
@@ -128,7 +138,7 @@ export class SandboxLab implements Lab {
         { x: startX + i * LINEUP_SPACING_M, y: sideM / 2 + 0.002, z: 0.2 },
       );
     });
-    ctx.ui.toast('Same size — five 2″ cubes, 2.4 kg down to 0.35 kg');
+    ctx.ui.toast('Same size — six 2″ cubes, 2.5 kg down to 0.35 kg');
   }
 
   /** The 1 kg set — "same mass, wildly different size", the other killer screenshot. */

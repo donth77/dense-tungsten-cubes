@@ -76,7 +76,9 @@ export class Spawner {
 
   #buildMetals(): HTMLElement {
     const row = el('div.metals', { role: 'group', 'aria-label': 'Metal' });
-    for (const id of ['W', 'Cu', 'Fe', 'Ti', 'Al'] as MetalId[]) {
+    // Au sits second, right beside W: the two are 0.4 % apart in density and the whole
+    // point is that you compare them. Separating them across the row hides the joke.
+    for (const id of ['W', 'Au', 'Cu', 'Fe', 'Ti', 'Al'] as MetalId[]) {
       const spec = METALS[id];
       const [r, g, b] = spec.baseColorLinear;
       // The swatch shows TRUE material colour, so it must match what renders in the

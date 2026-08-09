@@ -38,10 +38,57 @@ export function isPhoneClass(): boolean {
   return coarse && small;
 }
 
+/**
+ * The selection marker sits this much outside the cube's own faces. Enough to clear the
+ * surface (and the 3 % chamfer) without reading as a separate floating object.
+ */
+const SELECTION_INFLATE = 1.06;
+/** Bracket arm length, as a fraction of the side. Corners only — never a full wireframe. */
+const SELECTION_ARM = 0.24;
+/** `--acc` from tokens.css. Hardcoded like `--bg` above: data/ and core/ can't read CSS. */
+const SELECTION_COLOR = 0xff6b1f;
+/** m/s. Below this a cube is resting (Rapier's own sleep threshold territory). */
+const SELECTION_FADE_START = 0.02;
+/** m/s. Anything moving this fast is doing the thing you are meant to be watching. */
+const SELECTION_FADE_END = 0.35;
+
+/**
+ * How strongly the selection brackets draw at a given speed: full at rest, gone in
+ * motion.
+ *
+ * The impact is the product. A bright accent-orange cage wrapped around a cube at the
+ * exact moment it lands competes with the one event the whole toy exists to show, so
+ * the marker gets out of the way and comes back when there is something to label.
+ *
+ * A continuous ramp rather than a still/moving switch, deliberately. A binary rule needs
+ * hysteresis and a timer to survive contact with reality — a cube settling onto a stack,
+ * or rocking on one edge, crosses any fixed threshold repeatedly and would strobe. Here
+ * that same jitter produces a few percent of opacity wobble, which nobody can see.
+ *
+ * A 2" cube dropped from the tray lands at ~2.8 m/s, so the brackets are long gone
+ * before contact.
+ */
+export function selectionOpacityForSpeed(speedMps: number): number {
+  const t = (speedMps - SELECTION_FADE_START) / (SELECTION_FADE_END - SELECTION_FADE_START);
+  return 1 - Math.min(1, Math.max(0, t));
+}
+
 export class RenderWorld {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
+  /**
+   * Corner brackets around the selected cube, positioned by `EntityStore.interpolate()`.
+   *
+   * It has to be a separate object rather than a material tweak: `cubeMaterial()` returns
+   * a **shared per-metal cache**, so setting `emissive` on the selected cube's material
+   * would light up every other cube of that metal at the same time.
+   *
+   * Brackets rather than a full wireframe or an outline shell, because the cube is
+   * chamfered and orbited freely — corners are the one feature that stays readable from
+   * every angle and at every size from 0.25" to 15".
+   */
+  readonly selection: THREE.LineSegments;
 
   readonly #phone = isPhoneClass();
   readonly #geometryCache = new Map<number, THREE.BufferGeometry>();
@@ -83,6 +130,12 @@ export class RenderWorld {
     this.#buildEnvironment();
     this.#buildLights();
     this.#buildStage();
+    this.selection = makeSelectionMarker();
+    this.scene.add(this.selection);
+    this.#disposers.push(() => {
+      this.selection.geometry.dispose();
+      (this.selection.material as THREE.Material).dispose();
+    });
     this.resize();
   }
 
@@ -365,6 +418,48 @@ export class RenderWorld {
     this.renderer.dispose();
   }
 }
+
+/**
+ * 24 short segments — three arms at each of the 8 corners of a unit cube, so the whole
+ * thing scales to any cube by setting `scale`. 48 vertices, one draw call.
+ *
+ * `toneMapped: false` matters: this is UI drawn into a 3D scene, and AgX would otherwise
+ * pull the accent orange toward the same desaturated range as everything else on stage —
+ * which is exactly the separation the marker exists to provide.
+ *
+ * `depthTest` stays ON. An always-on-top marker is easier to find in a pile, but it
+ * shows through cubes stacked in front of it, and a selection ring that floats over
+ * solid metal breaks the "these are real objects" contract the rest of the toy keeps.
+ */
+function makeSelectionMarker(): THREE.LineSegments {
+  const h = 0.5;
+  const inner = h - SELECTION_ARM;
+  const pts: number[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const [cx, cy, cz] = [sx * h, sy * h, sz * h];
+        pts.push(cx, cy, cz, sx * inner, cy, cz);
+        pts.push(cx, cy, cz, cx, sy * inner, cz);
+        pts.push(cx, cy, cz, cx, cy, sz * inner);
+      }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const mesh = new THREE.LineSegments(
+    geo,
+    // transparent, so the marker can fade out while its cube is in motion — see
+    // selectionOpacityForSpeed().
+    new THREE.LineBasicMaterial({ color: SELECTION_COLOR, toneMapped: false, transparent: true }),
+  );
+  mesh.visible = false;
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
+/** How far outside the cube the marker sits — `EntityStore` applies it to the scale. */
+export { SELECTION_INFLATE };
 
 /** 64×64 radial gradient, generated rather than shipped (08 §12: ~2 kB saved is ~2 kB). */
 function makeBlobTexture(): THREE.Texture {

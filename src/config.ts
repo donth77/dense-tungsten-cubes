@@ -154,6 +154,19 @@ export const config = {
      */
     trayCentre: { x: 0, y: 0.4, z: 0 },
     trayScatterM: 0.06,
+    /**
+     * Below this, an un-held cube is gone for good.
+     *
+     * The floor is a finite 6 m slab, so anything pushed past its edge falls forever —
+     * and before this existed, nothing ever cleaned those up. They kept a Rapier body, a
+     * mesh and a shadow blob alive off-screen, and counted against `limits.maxCubes`,
+     * so a scene could evict cubes you could see to make room for cubes you couldn't.
+     *
+     * -2 m is roughly 0.64 s of fall: long enough that the cube is well out of frame at
+     * any camera angle we allow, short enough that it never becomes a fast-moving body
+     * the solver has to keep thinking about.
+     */
+    killPlaneY: -2,
   },
 
   limits: {

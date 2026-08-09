@@ -19,6 +19,7 @@ import type { ImpactEvent, MetalId, SurfaceId } from '../types.ts';
 
 export type VoiceId =
   | 'thud_deep'
+  | 'thud_au'
   | 'clank_al'
   | 'ring_cu'
   | 'tink_ti'
@@ -64,6 +65,28 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
     noiseQ: 0.9,
     thump: 0.7,
     thumpHz: 52,
+  },
+  /*
+   * Au — a dead, low "DUMP", and deliberately the deadest voice here.
+   *
+   * A struck bar's pitch scales with sqrt(E/ρ), and gold is the outlier: 79 GPa against
+   * tungsten's 411 at essentially the same density, which is ~2,020 m/s against ~4,620.
+   * So gold sits well below WHA even though the two weigh the same — the one cue that
+   * tells the cubes apart when mass and size cannot.
+   *
+   * Held above the literal ratio (which lands near 45 Hz) because a phone speaker
+   * simply does not reproduce that: a voice nobody can hear is not a voice.
+   */
+  thud_au: {
+    freq: 78,
+    partials: [1, 2.17, 3.62],
+    decayS: 0.055, // shorter even than WHA — soft, ductile, energy goes into the dent
+    noise: 0.6,
+    noiseHz: 380,
+    noiseDecayS: 0.028,
+    noiseQ: 0.8,
+    thump: 0.8,
+    thumpHz: 44,
   },
   clank_al: {
     freq: 690,
@@ -161,14 +184,19 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
 
 const METAL_VOICE: Record<MetalId, VoiceId> = {
   W: 'thud_deep',
+  Au: 'thud_au',
   Al: 'clank_al',
   Cu: 'ring_cu',
   Ti: 'tink_ti',
   Fe: 'ring_fe',
 };
 
-/** Which metal "wins" a cube-on-cube collision — the harder hitter speaks (08 §8.7). */
-const METAL_HARDNESS: Record<MetalId, number> = { W: 5, Fe: 4, Ti: 3, Cu: 2, Al: 1 };
+/**
+ * Which metal "wins" a cube-on-cube collision — the harder hitter speaks (08 §8.7).
+ * Ordered by Mohs, which puts gold at the bottom: at 2.5 it is softer than aluminium,
+ * so it never speaks over anything it lands on.
+ */
+const METAL_HARDNESS: Record<MetalId, number> = { W: 5, Fe: 4, Ti: 3, Cu: 2, Al: 1, Au: 0 };
 
 /** The first sound anyone hears is a cube landing on concrete. Everything else waits. */
 const WARM_VOICES: readonly VoiceId[] = ['thud_deep', 'crack_concrete'];

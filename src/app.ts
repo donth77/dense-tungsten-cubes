@@ -96,6 +96,7 @@ export class App implements Stepper {
       onResetView: () => this.rig.reset(this.spec.sideM),
       onLabChange: (lab) => void this.labs.switchTo(lab),
       onHandMode: (mode) => this.hand.setMode(mode),
+      onDeleteSelected: () => this.deleteSelected(),
     });
 
     this.bus.on('select', ({ id }) => this.#select(id));
@@ -148,6 +149,9 @@ export class App implements Stepper {
     switch (action) {
       case 'spawn':
         this.spawn();
+        break;
+      case 'deleteSelected':
+        this.deleteSelected();
         break;
       case 'resetLab':
         this.reset();
@@ -210,8 +214,10 @@ export class App implements Stepper {
       case 'metal2':
       case 'metal3':
       case 'metal4':
-      case 'metal5': {
-        const metals: MetalId[] = ['W', 'Cu', 'Fe', 'Ti', 'Al'];
+      case 'metal5':
+      case 'metal6': {
+        // Same order as the swatch row, so "3" is always the third swatch.
+        const metals: MetalId[] = ['W', 'Au', 'Cu', 'Fe', 'Ti', 'Al'];
         const picked = metals[Number(action.slice(-1)) - 1];
         if (picked) this.hud.spawner.setMetal(picked);
         break;
@@ -224,6 +230,22 @@ export class App implements Stepper {
     const e = id === null ? undefined : this.entities.get(id);
     if (e) this.hud.infocard.show(e.spec);
     else this.hud.infocard.hide();
+    // The card and the corner brackets are one state, shown two ways.
+    this.entities.setSelected(e ? id : null);
+  }
+
+  /**
+   * Removes the selected cube — the Remove button and the Delete key both land here.
+   *
+   * The hand is released first when it happens to be holding the target. `applyForces()`
+   * does self-heal if its entity vanishes, but it heals silently: no `release` event, and
+   * a stale force-meter reading left on screen.
+   */
+  deleteSelected(): void {
+    const id = this.#selected;
+    if (id === null) return;
+    if (this.hand.heldId === id) this.hand.release();
+    this.entities.despawn(id);
   }
 
   #buildStage(): void {
@@ -280,6 +302,10 @@ export class App implements Stepper {
       this.lastImpact = ev;
       this.bus.emit('impact', ev);
     }
+    // 7. Sweep up anything flung off the slab. AFTER the fan-out, deliberately: an
+    //    impact event carries entity ids, and culling first could hand a listener an
+    //    id whose voice the audio bus has already unregistered.
+    this.entities.cullBelow(config.stage.killPlaneY);
   }
 
   renderStep(alpha: number, dtFrameS: number): void {

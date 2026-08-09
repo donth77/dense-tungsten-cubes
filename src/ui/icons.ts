@@ -10,7 +10,15 @@
  * drawing line weight the rest of the UI uses (13 §4).
  */
 
-export type IconId = 'recenter' | 'engrave' | 'engraveOff' | 'sound' | 'muted' | 'help' | 'close';
+export type IconId =
+  | 'recenter'
+  | 'engrave'
+  | 'engraveOff'
+  | 'sound'
+  | 'muted'
+  | 'help'
+  | 'close'
+  | 'trash';
 
 const PATHS: Record<IconId, string> = {
   // Recenter: a framing bracket around a target dot.
@@ -26,6 +34,10 @@ const PATHS: Record<IconId, string> = {
   muted: '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 10l5 4M21 10l-5 4"/>',
   help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.8.7-.8 1.3v.4"/><circle cx="12" cy="16.6" r="0.9" fill="currentColor" stroke="none"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  // Deliberately a bin, not an X. An X beside a readout reads as "close this panel";
+  // the panel is not what the button removes.
+  trash:
+    '<path d="M4 7h16M9.5 7V4.5h5V7M6.6 7l.85 12.6a1 1 0 0 0 1 .9h7.1a1 1 0 0 0 1-.9L17.4 7"/><path d="M10.2 11v5.4M13.8 11v5.4"/>',
 };
 
 export function icon(id: IconId, sizePx = 18): SVGSVGElement {

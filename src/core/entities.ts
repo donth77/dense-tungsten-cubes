@@ -4,6 +4,7 @@ import { cubeMassKg } from '../data/metals.ts';
 import type { BodyHandle, CubeSpec, EntityId, Transform, Vec3 } from '../types.ts';
 import type { EventBus } from './events.ts';
 import type { PhysicsWorld } from './physics.ts';
+import { SELECTION_INFLATE, selectionOpacityForSpeed } from './render.ts';
 import type { RenderWorld } from './render.ts';
 
 export interface Entity {
@@ -33,6 +34,10 @@ export class EntityStore {
   readonly #map = new Map<EntityId, Entity>();
   readonly #byBody = new Map<BodyHandle, EntityId>();
   #nextId: EntityId = 1;
+  /** Drives the corner-bracket marker only; `app.ts` owns what "selected" means. */
+  #selectedId: EntityId | null = null;
+  /** Reused by cullBelow() — see the note there about allocating at 60 Hz. */
+  readonly #doomed: EntityId[] = [];
 
   // Scratch objects — spawning allocations into the render loop is how a toy that runs
   // at 60 fps for ten seconds runs at 50 after a minute of GC pressure.
@@ -113,7 +118,39 @@ export class EntityStore {
     (e.blob.material as THREE.Material).dispose();
     this.#byBody.delete(e.body);
     this.#map.delete(id);
+    if (this.#selectedId === id) this.setSelected(null);
     this.bus.emit('despawn', { id });
+  }
+
+  /** Points the corner-bracket marker at a cube, or hides it. */
+  setSelected(id: EntityId | null): void {
+    this.#selectedId = id !== null && this.#map.has(id) ? id : null;
+    if (this.#selectedId === null) this.render.selection.visible = false;
+  }
+
+  get selectedId(): EntityId | null {
+    return this.#selectedId;
+  }
+
+  /**
+   * Removes every un-held cube that has fallen below `y` — the fling-off-the-edge
+   * discard, and the cleanup for anything that leaves the slab by accident.
+   *
+   * Held cubes are exempt: yanking a cube out of the player's hand mid-drag is the one
+   * removal that would read as a bug rather than a rule (same reasoning as #enforceCap).
+   */
+  cullBelow(y: number): number {
+    // Fast path first. This runs every fixed step and on the overwhelming majority of
+    // them nothing is falling, so the scan stays allocation-free until it has to act —
+    // the same discipline captureTransforms() was rewritten for.
+    this.#doomed.length = 0;
+    for (const e of this.#map.values()) {
+      if (e.heldBy === null && e.curr.p.y < y) this.#doomed.push(e.id);
+    }
+    // Collected before despawning: despawn() emits synchronously, and a handler that
+    // touched the store would otherwise be mutating the map we are iterating.
+    for (const id of this.#doomed) this.despawn(id);
+    return this.#doomed.length;
   }
 
   /** Purity edits mutate in place — the body keeps its pose, velocity, contacts and grab. */
@@ -185,6 +222,30 @@ export class EntityStore {
       e.blob.visible = fade > 0.01;
       e.blob.scale.setScalar(side * (1.3 + lift * 1.5));
     }
+    this.#syncSelection();
+  }
+
+  /**
+   * The marker rides the *interpolated* mesh transform, not the fixed-step one — read
+   * from `curr` it would visibly lag the cube it is supposed to be attached to.
+   */
+  #syncSelection(): void {
+    const marker = this.render.selection;
+    const e = this.#selectedId === null ? undefined : this.#map.get(this.#selectedId);
+    if (!e) {
+      marker.visible = false;
+      return;
+    }
+    // Fades out while the cube is moving so it never sits on top of a collision.
+    // `lastVel` is already latched every step, so this costs nothing.
+    const v = e.lastVel;
+    const opacity = selectionOpacityForSpeed(Math.hypot(v.x, v.y, v.z));
+    marker.visible = opacity > 0.01;
+    if (!marker.visible) return;
+    (marker.material as THREE.LineBasicMaterial).opacity = opacity;
+    marker.position.copy(e.mesh.position);
+    marker.quaternion.copy(e.mesh.quaternion);
+    marker.scale.setScalar(e.spec.sideM * SELECTION_INFLATE);
   }
 
   /** Re-skins every live cube — used when the engraving toggle flips. */

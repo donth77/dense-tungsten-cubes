@@ -9,10 +9,13 @@ import { button, clear, el } from './dom.ts';
 import { icon } from './icons.ts';
 
 /**
- * The controls sheet.
+ * The Help sheet.
  *
- * Rendered from the same binding table the input router dispatches from, so it cannot
- * describe a shortcut that doesn't exist (see interaction/bindings.ts).
+ * "Help" is the sheet; Controls is the first topic in it (see #topics()) — the structure
+ * is there so a second topic costs one array entry rather than a redesign.
+ *
+ * The Controls topic is rendered from the same binding table the input router dispatches
+ * from, so it cannot describe a shortcut that doesn't exist (see interaction/bindings.ts).
  *
  * **Capability-detected, not device-sniffed.** A tablet with a keyboard, a laptop with a
  * touchscreen and a phone with a Bluetooth keyboard are all real and all common, so the
@@ -43,7 +46,7 @@ export class HelpPanel {
     this.#body = el('div.help-body');
     this.#closeBtn = button('', () => this.close(), {
       class: 'iconbtn',
-      'aria-label': 'Close controls',
+      'aria-label': 'Close help',
       title: 'Close',
     });
     this.#closeBtn.appendChild(icon('close'));
@@ -62,7 +65,7 @@ export class HelpPanel {
         el(
           'div.help-head',
           {},
-          el('h2.help-title', { id: 'help-title', text: 'Controls' }),
+          el('h2.help-title', { id: 'help-title', text: 'Help' }),
           this.#closeBtn,
         ),
         this.#body,
@@ -144,9 +147,19 @@ export class HelpPanel {
     }
   };
 
-  #render(): void {
-    clear(this.#body);
+  /**
+   * The sheet is "Help", and Controls is one topic inside it — so a second topic is a
+   * second entry here and nothing else has to move. Empty topics drop out rather than
+   * rendering a bare heading.
+   */
+  #topics(): { title: string; content: HTMLElement[] }[] {
+    return [{ title: 'Controls', content: this.#controlRows() }].filter(
+      (t) => t.content.length > 0,
+    );
+  }
 
+  #controlRows(): HTMLElement[] {
+    const out: HTMLElement[] = [];
     for (const group of CONTROL_GROUPS) {
       const rows: HTMLElement[] = [];
 
@@ -171,14 +184,31 @@ export class HelpPanel {
       }
 
       if (rows.length === 0) continue;
-      this.#body.append(el('section.help-group', {}, el('h3.k', { text: group }), ...rows));
+      // h4, because the group now sits under the topic's h3 — a heading level skipped
+      // is a heading level a screen-reader user has to guess at.
+      out.push(el('section.help-group', {}, el('h4.k', { text: group }), ...rows));
     }
 
     if (this.#hasCoarse && this.#hasFine) {
-      this.#body.append(
+      out.push(
         el('p.help-note', {
           text: 'This device reports both touch and a mouse, so both are listed.',
         }),
+      );
+    }
+    return out;
+  }
+
+  #render(): void {
+    clear(this.#body);
+    for (const topic of this.#topics()) {
+      this.#body.append(
+        el(
+          'section.help-topic',
+          {},
+          el('h3.help-topic-title', { text: topic.title }),
+          ...topic.content,
+        ),
       );
     }
   }

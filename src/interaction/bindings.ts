@@ -8,6 +8,7 @@
 
 export type ActionId =
   | 'spawn'
+  | 'deleteSelected'
   | 'resetLab'
   | 'resetView'
   | 'toggleUnits'
@@ -21,6 +22,7 @@ export type ActionId =
   | 'metal3'
   | 'metal4'
   | 'metal5'
+  | 'metal6'
   | 'orbitLeft'
   | 'orbitRight'
   | 'orbitUp'
@@ -53,10 +55,19 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
     group: 'Cubes',
   },
   {
-    codes: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'],
-    label: '1 – 5',
+    codes: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'],
+    label: '1 – 6',
     action: 'metal1',
-    description: 'Pick metal (W, Cu, Fe, Ti, Al)',
+    description: 'Pick metal (W, Au, Cu, Fe, Ti, Al)',
+    group: 'Cubes',
+  },
+  {
+    // Backspace as well as Delete: laptop keyboards without a dedicated Delete key are
+    // the common case, and on those Backspace *is* the delete key.
+    codes: ['Delete', 'Backspace'],
+    label: 'Del',
+    action: 'deleteSelected',
+    description: 'Remove the selected cube',
     group: 'Cubes',
   },
   {
@@ -158,6 +169,7 @@ export const MOUSE_GESTURES: readonly GestureHelp[] = [
     description: 'Push the cube away or pull it closer',
     group: 'Cubes',
   },
+  { label: 'Fling off the edge', description: 'Throw a cube away to be rid of it', group: 'Cubes' },
 ];
 
 export const TOUCH_GESTURES: readonly GestureHelp[] = [
@@ -172,6 +184,7 @@ export const TOUCH_GESTURES: readonly GestureHelp[] = [
   { label: 'Three fingers', description: 'Pan across the stage', group: 'Camera' },
   { label: 'Double-tap empty', description: 'Reset the camera', group: 'Camera' },
   { label: 'Press and hold the floor', description: 'Spawn a cube right there', group: 'Cubes' },
+  { label: 'Fling off the edge', description: 'Throw a cube away to be rid of it', group: 'Cubes' },
 ];
 
 const ARROWS: Record<string, string> = {
@@ -185,7 +198,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = ['Cubes', 'Camera', 'Disp
 
 /** Resolves a `KeyboardEvent.code` to an action, honouring the 1–5 metal row. */
 export function actionForCode(code: string, shift = false): ActionId | null {
-  if (/^Digit[1-5]$/.test(code)) return `metal${code.slice(-1)}` as ActionId;
+  if (/^Digit[1-6]$/.test(code)) return `metal${code.slice(-1)}` as ActionId;
   // Arrows orbit, or pan with Shift. Handled here so the help table and the router
   // can never disagree about which is which.
   const arrow = ARROWS[code];

@@ -3,6 +3,7 @@ import {
   astmClassLabel,
   cubeMassKg,
   densityOf,
+  METALS,
   whaDensity,
   WHA_PURITY_DEFAULT,
 } from '../../src/data/metals.ts';
@@ -86,6 +87,31 @@ describe('densityOf', () => {
   it('ignores purity for non-tungsten metals', () => {
     expect(densityOf('Al', 90)).toBe(2700);
     expect(densityOf('Cu', 97)).toBe(8960);
+  });
+});
+
+/**
+ * Gold is in the app for one reason, and it is a numeric one. If these drift, the
+ * gold-vs-tungsten comparison stops being surprising and gold becomes decoration.
+ */
+describe('gold, and why it is here', () => {
+  it('is within half a percent of PURE tungsten — the counterfeiting fact', () => {
+    const au = densityOf('Au');
+    const pureW = 19_250;
+    expect(au).toBe(19_320);
+    expect(Math.abs(au - pureW) / pureW).toBeLessThan(0.005);
+  });
+
+  it('is denser than every heavy-alloy grade the purity slider can reach', () => {
+    // The honest half of the story: the ALLOY in this app tops out at 97 % W / 18,500,
+    // so a same-size gold cube always wins the scale. Only pure tungsten ties.
+    expect(densityOf('Au')).toBeGreaterThan(whaDensity(97));
+    expect(cubeMassKg('Au', 2 * IN)).toBeGreaterThan(cubeMassKg('W', 2 * IN, 97));
+  });
+
+  it('is the deadest metal in the set — soft, ductile, barely rebounds', () => {
+    const others = (['W', 'Cu', 'Fe', 'Ti', 'Al'] as const).map((m) => METALS[m].restitution);
+    for (const r of others) expect(METALS.Au.restitution).toBeLessThan(r);
   });
 });
 

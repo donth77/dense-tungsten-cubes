@@ -129,9 +129,18 @@
 }
 
 /* Phone landscape: right rail. A bottom sheet would eat a 390px-tall viewport. */
+/* Widened from 280px when gold made the metal row six wide: at 280 each swatch came out
+   39.2px, and a 44px-tall / 39px-wide target fails --tap in the axis a thumb misses.
+   The alternative — wrapping to two rows of three — costs 48px of vertical in the one
+   layout that is height-constrained, which risks pushing Spawn below the fold.
+   Declared once because the info card is positioned off the dock's edge; as two separate
+   literals these drifted apart the moment either moved. */
+#app.phone-landscape {
+  --dock-w: 312px;
+}
 #app.phone-landscape .dock {
   inset: calc(40px + var(--safe-t)) 0 0 auto;
-  width: 280px;
+  width: var(--dock-w);
   border-width: 0 0 0 var(--hair);
   padding: var(--s3) calc(var(--s3) + var(--safe-r)) calc(var(--s3) + var(--safe-b)) var(--s3);
   overflow-y: auto;
@@ -188,8 +197,12 @@
    shows real material colour, so the selection ring is ink rather than accent (13 §2.1). */
 .metals {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: var(--s2);
+  /* Six, and the count is not incidental: the row IS the comparison, so W and Au have
+     to be side by side in one glance. Gap tightened from --s2 when gold arrived —
+     at 8px the sixth swatch fell to a second row, and at 4px each one still clears the
+     44px tap target in the narrowest dock we ship (12 §4). */
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--s1);
 }
 .metal {
   appearance: none;
@@ -393,7 +406,7 @@
 }
 #app.phone-landscape .infocard {
   top: calc(40px + var(--safe-t) + var(--s3));
-  right: calc(280px + var(--s3) + var(--safe-r));
+  right: calc(var(--dock-w) + var(--s3) + var(--safe-r));
   width: 240px;
 }
 /* Four spec cells will NOT fit across a 280px card: "18.00 g/cm³" alone wants ~90px
@@ -431,6 +444,58 @@
 .infocard .twin b {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* The action row sits OUTSIDE .infocard-live — see the note in infocard.ts about why a
+   button must not live inside the aria-live region. */
+.infocard-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: var(--hair) solid var(--line);
+  padding-top: var(--s2);
+}
+
+/* A labelled button, not a bare icon: this is the one destructive control in the app,
+   and "Remove" costs 60px of a 280px card to remove all doubt about what it does. */
+.cardbtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  background: none;
+  border: var(--hair) solid var(--line2);
+  border-radius: var(--r-sm);
+  color: var(--ink2);
+  font: 600 var(--t-sm) / 1 var(--body);
+  padding: 0 var(--s3);
+  /* Full 44px on touch, tighter on a mouse where the card is already dense. */
+  min-height: 32px;
+  cursor: pointer;
+  transition:
+    color var(--dur-color) linear,
+    border-color var(--dur-color) linear,
+    background-color var(--dur-color) linear;
+}
+#app.phone-portrait .cardbtn,
+#app.phone-landscape .cardbtn,
+#app.tablet .cardbtn {
+  min-height: var(--tap);
+  padding: 0 var(--s4);
+}
+.cardbtn svg {
+  display: block;
+}
+/* Destructive, but not alarming while idle: --bad is reserved for the hover/active
+   moment, so a card sitting open does not read as an error state. */
+.cardbtn.danger:hover,
+.cardbtn.danger:focus-visible {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: var(--card2);
+}
+.cardbtn.danger:active {
+  background: var(--card2);
+  color: var(--bad);
 }
 
 /* ---------------------------------------------------------------------------
@@ -608,10 +673,17 @@
   background: var(--card);
   border: var(--hair) solid var(--line2);
   border-radius: var(--r-md);
-  padding: var(--s4);
+  /* NO top padding — the sticky header supplies its own, so its background runs flush to
+     the card's top edge. With the padding here, the header stuck 17px down (1px border +
+     16px padding) and scrolled rows showed through the strip above it, which is the one
+     thing a sticky header exists to prevent. */
+  padding: 0 var(--s4) var(--s4);
   width: min(560px, 100%);
   max-height: 100%;
   overflow-y: auto;
+  /* Keeps a focused control from being scrolled underneath the header. Nothing outside
+     the header is focusable yet, but more help topics are coming. */
+  scroll-padding-top: calc(var(--tap) + var(--s4) + var(--s2));
   display: flex;
   flex-direction: column;
   gap: var(--s3);
@@ -623,7 +695,11 @@
   gap: var(--s3);
   position: sticky;
   top: 0;
+  /* Sticky is already "positioned" and so paints over the static body, but the body is
+     one `position` declaration away from reversing that silently. */
+  z-index: 1;
   background: var(--card);
+  padding: var(--s4) 0 var(--s2);
 }
 .help-title {
   font: 600 var(--t-lg) / 1.2 var(--disp);
@@ -634,7 +710,21 @@
 .help-body {
   display: flex;
   flex-direction: column;
+  gap: var(--s5);
+}
+/* The sheet is "Help"; Controls is one topic within it. The extra level exists so more
+   topics can be added without the dialog turning into an undifferentiated list. */
+.help-topic {
+  display: flex;
+  flex-direction: column;
   gap: var(--s4);
+}
+.help-topic-title {
+  font: 600 var(--t-base) / 1.2 var(--body);
+  color: var(--ink);
+  margin: 0;
+  padding-bottom: var(--s2);
+  border-bottom: var(--hair) solid var(--line2);
 }
 .help-group {
   display: flex;

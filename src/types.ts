@@ -6,7 +6,7 @@
  * and eslint enforces that.
  */
 
-export type MetalId = 'W' | 'Cu' | 'Fe' | 'Ti' | 'Al';
+export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
 /**
  * How a material's contact coefficients combine with its partner's.

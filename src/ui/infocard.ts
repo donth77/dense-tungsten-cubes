@@ -1,7 +1,8 @@
 import { astmClassLabel, cubeMassKg, densityOf, METALS } from '../data/metals.ts';
 import { cubeSide, density, mass, percent, volume } from '../data/format.ts';
 import { massComparison, matchTwin } from '../data/twins.ts';
-import { el, setText } from './dom.ts';
+import { button, el, setText } from './dom.ts';
+import { icon } from './icons.ts';
 import type { SettingsStore } from './settings.ts';
 import type { CubeSpec } from '../types.ts';
 
@@ -21,7 +22,10 @@ export class InfoCard {
   readonly #twin = el('div.twin');
   readonly #cells = new Map<string, { value: HTMLElement; sub: HTMLElement }>();
 
-  constructor(private readonly settings: SettingsStore) {
+  constructor(
+    private readonly settings: SettingsStore,
+    onDelete: () => void,
+  ) {
     const grid = el('div.cells');
     for (const key of ['Mass', 'Side', 'Density', 'Volume']) {
       const value = el('div.val');
@@ -30,12 +34,37 @@ export class InfoCard {
       grid.appendChild(el('div.cell', {}, el('div.k', { text: key }), value, sub));
     }
 
-    this.root = el(
-      'div.infocard',
+    /*
+     * The readout is the live region — NOT the whole card.
+     *
+     * `role="status"` used to sit on the root, which was fine while the card was pure
+     * text. It stops being fine the moment it contains a button: a live region
+     * re-announces its subtree on change, so every drag of the purity slider would read
+     * the Remove button out again, and interactive controls inside a status region are
+     * announced with the wrong role by several screen readers.
+     */
+    const readout = el(
+      'div.infocard-live',
       { role: 'status', 'aria-live': 'polite' },
       el('div.head', {}, this.#title, this.#chip),
       grid,
       this.#twin,
+    );
+
+    const del = button('Remove', onDelete, {
+      class: 'cardbtn danger',
+      // The shortcut is announced rather than only written in a tooltip, so it reaches
+      // someone who never sees the label.
+      'aria-keyshortcuts': 'Delete',
+      title: 'Remove this cube  (Del)',
+    });
+    del.prepend(icon('trash', 15));
+
+    this.root = el(
+      'div.infocard',
+      { role: 'group', 'aria-label': 'Selected cube' },
+      readout,
+      el('div.infocard-actions', {}, del),
     );
     this.root.style.display = 'none';
     this.settings.subscribe(() => this.#render());

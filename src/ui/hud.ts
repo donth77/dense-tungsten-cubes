@@ -24,6 +24,7 @@ export interface HudCallbacks extends SpawnerCallbacks {
   onResetView(): void;
   onLabChange(lab: 'sandbox' | 'weigh'): void;
   onHandMode(mode: HandModeId): void;
+  onDeleteSelected(): void;
 }
 
 export class Hud {
@@ -56,7 +57,7 @@ export class Hud {
   ) {
     this.layout = new LayoutManager(this.appEl);
     this.spawner = new Spawner(settings, cb);
-    this.infocard = new InfoCard(settings);
+    this.infocard = new InfoCard(settings, () => this.cb.onDeleteSelected());
     this.meter = new ForceMeter();
     this.pressRing = new PressRing();
     this.labPanel = el('div.labpanel');
@@ -85,8 +86,8 @@ export class Hud {
 
     this.#helpBtn = button('', () => this.help.toggle(), {
       class: 'iconbtn',
-      'aria-label': 'Controls and shortcuts',
-      title: 'Controls  (?)',
+      'aria-label': 'Help',
+      title: 'Help  (?)',
       'aria-haspopup': 'dialog',
     });
     this.#helpBtn.appendChild(icon('help'));
