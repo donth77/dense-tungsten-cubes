@@ -44,7 +44,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npx vite --port ${PORT} --strictPort --host 127.0.0.1`,
+    command: `pnpm exec vite --port ${PORT} --strictPort --host 127.0.0.1`,
     url: BASE,
     reuseExistingServer: !process.env['CI'],
     timeout: 60_000,

@@ -10,8 +10,8 @@ assets-lib/
 node_modules/
 dist/
 
-# docs/ is intentionally TRACKED — it is the entire project right now (11 design docs,
-# the interactive dossier, and the asset attribution log). Un-ignored 2026-08-09.
+# Internal design docs — local only, not part of the public repo
+docs/
 
 # Playwright
 test-results/
@@ -19,6 +19,5 @@ playwright-report/
 blob-report/
 .playwright-mcp/
 
-docs/
 test-screenshots
 *.png
