@@ -3,9 +3,9 @@ import { config } from '../config.ts';
 import { densityOf } from '../data/metals.ts';
 import { METALS } from '../data/metals.ts';
 import { SURFACES } from '../data/surfaces.ts';
+import { E_REF_PAIR, MU_REF_PAIR, factor } from '../data/contact.ts';
 import type {
   BodyHandle,
-  CombineRule,
   CubeSpec,
   EntityId,
   ImpactEvent,
@@ -21,26 +21,53 @@ import type {
  * It exposes opaque `BodyHandle`s and plain vectors. That firewall is the engine-swap
  * seam, and it is why unit tests never need wasm.
  *
- * Everything is SI at true scale (08 §2.7). If the M0 jitter gate fails, the escalation
- * order is: solver iterations -> damping -> `world.lengthUnit` -> `WORLD_SCALE = 4`.
+ * Everything is SI at true scale (08 §2.7), and the timestep is FIXED — the world is
+ * never stepped at a rate that depends on what happens to be in it. See `step()`.
  */
 
-const GRAVITY_MPS2 = 9.81;
+const GRAVITY_MPS2 = config.physics.gravityMps2;
 
 /**
- * `data/` declares its combine rule as a plain string so it never imports Rapier
- * (08 §5.1). This is the only place the mapping exists.
+ * Rapier's `Multiply` rule is what makes the separable pair model of `data/contact.ts`
+ * come out right, and every collider must use it or the pair is silently something else.
+ * Both coefficients go through `factor()`; see that file for the algebra.
  */
-function combineRule(rule: CombineRule): RAPIER.CoefficientCombineRule {
-  switch (rule) {
-    case 'min':
-      return RAPIER.CoefficientCombineRule.Min;
-    case 'max':
-      return RAPIER.CoefficientCombineRule.Max;
-    default:
-      return RAPIER.CoefficientCombineRule.Average;
-  }
+const PAIR_RULE = RAPIER.CoefficientCombineRule.Multiply;
+
+/** A cube corner sits sqrt(3) half-extents from the centre — the angular sweep lever arm. */
+const CORNER_OVER_HALF = Math.sqrt(3);
+
+/** Shared with the renderer so the drawn and simulated cube are the same solid. */
+const RENDER_CHAMFER_FRACTION = config.geometry.chamferFraction;
+
+/**
+ * Mass properties for a chamfered cube of outer side `s` and density `rho`.
+ *
+ * These are set EXPLICITLY rather than left to `setDensity`, because Rapier 0.19.3
+ * derives a `roundCuboid`'s mass properties from the INNER box alone — the border radius
+ * contributes no mass and no inertia. Measured against the installed build: for any
+ * radius, `mass == rho * (2h)^3` exactly and `I == m*(2h)^2/6` exactly. At our 3 %
+ * chamfer that is a **16.75 % light** cube and an inertia **11.6 % low**, which would
+ * have quietly undone the one property this project most depends on — that the mass on
+ * the info card is the mass in the simulation.
+ *
+ * So:
+ * - **mass = rho * s^3**, the advertised figure `data/metals.ts` computes. The true
+ *   chamfered solid is 0.23 % smaller than that; a real machined cube is sold at its
+ *   nominal mass, and 0.23 % is well inside WHA's own supplier-to-supplier density
+ *   spread, so this is the honest number rather than a flattering one.
+ * - **I = m*s^2/6**, the ideal cube. Numerically integrating the actual rounded solid
+ *   gives 0.166177*m*s^2 against the ideal 0.166667 — **0.29 % low**, versus Rapier's
+ *   11.64 %. Isotropic, so the principal frame is the identity.
+ */
+function cubeMassProperties(s: number, rho: number): { mass: number; inertia: number } {
+  const mass = rho * s ** 3;
+  return { mass, inertia: (mass * s * s) / 6 };
 }
+
+/** Rapier wants a local principal frame; a cube's inertia is isotropic, so: identity. */
+const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+const ORIGIN = { x: 0, y: 0, z: 0 };
 
 /** Per-body bookkeeping the public surface never exposes. */
 interface Rec {
@@ -62,19 +89,20 @@ interface Rec {
   prevCom: Vec3;
   /** Mirrors Rapier's CCD flag so we only toggle it on an actual change. */
   ccd: boolean;
-  /** Half-side, metres. Drives size-aware substepping — see `#substepsFor`. */
+  /** Half-side, metres. Sets this body's own CCD sweep threshold — see `#updateCcd`. */
   halfExtent: number;
+  /** Outer side, metres. Dynamics only — the purity slider needs it to re-derive mass. */
+  sideM?: number;
 }
 
 export class PhysicsWorld {
   #world!: RAPIER.World;
+  /** Cached so `#updateCcd` can predict a step's velocity without a wasm call per body. */
+  readonly #gravity: Vec3 = { x: 0, y: -GRAVITY_MPS2, z: 0 };
   #events!: RAPIER.EventQueue;
   #recs = new Map<BodyHandle, Rec>();
   #byCollider = new Map<number, BodyHandle>();
   #nextHandle = 1;
-  /** `${handleA}:${handleB}` -> simulated-time ms of the last emitted impact. */
-  #pairCooldown = new Map<string, number>();
-  #simTimeMs = 0;
   /** Bodies that had a user force applied this step, so we know what to zero after it. */
   #forced = new Set<BodyHandle>();
 
@@ -90,8 +118,13 @@ export class PhysicsWorld {
     pw.#world = new RAPIER.World({ x: 0, y: -GRAVITY_MPS2, z: 0 });
     pw.#world.timestep = config.loop.DT;
     pw.#world.numSolverIterations = config.stability.solverIterations;
-    // The sanctioned first escalation for small-cube trouble: tell Rapier the world is
-    // measured in something other than metres, rather than rescaling our own geometry.
+    // Rapier defaults this to 1, which is not enough for a 60:1 size range — see the
+    // measurements quoted on config.stability.maxCcdSubsteps. Set explicitly, never
+    // inherited: a default that silently changes between versions is not a decision.
+    pw.#world.integrationParameters.maxCcdSubsteps = config.stability.maxCcdSubsteps;
+    // Tell Rapier the world is measured in something other than metres, rather than
+    // rescaling our own geometry. Measured to buy ~1.5 points on the size-ratio case, so
+    // it stays at 1 and the world stays in real metres.
     if (config.stability.lengthUnit !== 1) pw.#world.lengthUnit = config.stability.lengthUnit;
     // Contact tolerances sized for our smallest cube, not for human-scale props — see
     // the rationale in config.stability.allowedLinearError.
@@ -112,25 +145,42 @@ export class PhysicsWorld {
 
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(at.x, at.y, at.z)
-      .setCcdEnabled(opts?.ccd ?? false);
+      .setCcdEnabled(opts?.ccd ?? false)
+      // Off by measurement, not by omission — see config.stability.softCcdFraction.
+      .setSoftCcdPrediction((s / 2) * config.stability.softCcdFraction);
 
-    // The small-cube stability lever (05). Tiny colliders are what an impulse solver
-    // loses first, and the size slider goes down to 0.25".
-    if (s < config.stability.smallCubeSideM) {
-      bodyDesc
-        .setLinearDamping(config.stability.smallCubeLinearDamping)
-        .setAngularDamping(config.stability.smallCubeAngularDamping);
-    }
+    /*
+     * NO SIZE-THRESHOLD DAMPING (14 PHY-05).
+     *
+     * Cubes under 1" used to get linear damping 0.05 and angular 0.1 "for stability".
+     * Rapier's own docs call damping a way to fake air friction, and that is exactly what
+     * it did here: a 0.25" cube in vacuum fell at -9.568 m/s after one second where a 15"
+     * cube fell at -9.810, a 2.5 % error and a hard discontinuity at exactly one inch.
+     * Free fall is the one result this app must not get wrong, so the lever is gone. The
+     * jitter gate is met without it — see `tests/physics/resting.test.ts`.
+     */
     const body = this.#world.createRigidBody(bodyDesc);
 
-    // Density in kg/m³, never a hand-set mass: Rapier then derives mass AND the inertia
-    // tensor correctly. Setting mass directly would leave inertia wrong and a heavy cube
-    // would tumble like a light one.
-    const colDesc = RAPIER.ColliderDesc.cuboid(s / 2, s / 2, s / 2)
-      .setDensity(density)
-      .setFriction(metal.friction)
-      .setRestitution(metal.restitution)
-      .setRestitutionCombineRule(combineRule(metal.restitutionRule))
+    /*
+     * Rounded collider, matching the renderer's chamfer (14 PHY-07). Rapier's
+     * `roundCuboid` GROWS the box by `borderRadius`, so the half-extent is reduced by the
+     * radius to keep the advertised outer side exactly `s`. Mass properties are set
+     * explicitly — see `cubeMassProperties` for why `setDensity` cannot be trusted here.
+     */
+    const r = s * RENDER_CHAMFER_FRACTION;
+    const half = s / 2 - r;
+    const mp = cubeMassProperties(s, density);
+    const colDesc = RAPIER.ColliderDesc.roundCuboid(half, half, half, r)
+      .setMassProperties(
+        mp.mass,
+        ORIGIN,
+        { x: mp.inertia, y: mp.inertia, z: mp.inertia },
+        IDENTITY_ROTATION,
+      )
+      .setFriction(factor(metal.friction, MU_REF_PAIR))
+      .setFrictionCombineRule(PAIR_RULE)
+      .setRestitution(factor(metal.restitution, E_REF_PAIR))
+      .setRestitutionCombineRule(PAIR_RULE)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       // 0 = report every contact force. The gate that decides what is an *impact* is
       // ours (§8.1), not Rapier's — a threshold here would silently drop soft landings.
@@ -139,6 +189,8 @@ export class PhysicsWorld {
     const collider = this.#world.createCollider(colDesc, body);
     return this.#register(body, collider, {
       halfExtent: s / 2,
+      sideM: s,
+      ccd: opts?.ccd ?? false,
       ...(opts?.entityId !== undefined ? { entityId: opts.entityId } : {}),
     });
   }
@@ -154,20 +206,30 @@ export class PhysicsWorld {
     );
     const collider = this.#world.createCollider(
       RAPIER.ColliderDesc.cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
-        .setFriction(spec.friction)
-        .setRestitution(spec.restitution)
-        .setRestitutionCombineRule(combineRule(spec.restitutionRule))
+        .setFriction(factor(spec.friction, MU_REF_PAIR))
+        .setFrictionCombineRule(PAIR_RULE)
+        .setRestitution(factor(spec.restitution, E_REF_PAIR))
+        .setRestitutionCombineRule(PAIR_RULE)
         .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
         .setContactForceEventThreshold(0),
       body,
     );
-    return this.#register(body, collider, { surface });
+    return this.#register(body, collider, {
+      surface,
+      halfExtent: Math.min(halfExtents.x, halfExtents.y, halfExtents.z),
+    });
   }
 
   #register(
     body: RAPIER.RigidBody,
     collider: RAPIER.Collider,
-    extra: { surface?: SurfaceId; entityId?: EntityId; halfExtent?: number },
+    extra: {
+      surface?: SurfaceId;
+      entityId?: EntityId;
+      halfExtent?: number;
+      ccd?: boolean;
+      sideM?: number;
+    },
   ): BodyHandle {
     const handle = this.#nextHandle++ as BodyHandle;
     const rec: Rec = {
@@ -178,8 +240,13 @@ export class PhysicsWorld {
       prevLin: { x: 0, y: 0, z: 0 },
       prevAng: { x: 0, y: 0, z: 0 },
       prevCom: { ...at(body) },
-      ccd: false,
+      // Mirror what the body was actually CREATED with. Hardcoding `false` here meant a
+      // body made with `ccd: true` was recorded as CCD-off, so the first `#updateCcd`
+      // pass that agreed with the record skipped the toggle and left Rapier's real flag
+      // untouched — the bookkeeping and the engine disagreed from birth (14 PHY-04).
+      ccd: extra.ccd ?? false,
       halfExtent: extra.halfExtent ?? 0.05,
+      ...(extra.sideM !== undefined ? { sideM: extra.sideM } : {}),
       ...(extra.surface !== undefined ? { surface: extra.surface } : {}),
       ...(extra.entityId !== undefined ? { entityId: extra.entityId } : {}),
     };
@@ -194,9 +261,6 @@ export class PhysicsWorld {
     this.#byCollider.delete(rec.collider.handle);
     this.#recs.delete(h);
     this.#world.removeRigidBody(rec.body); // removes its colliders too
-    for (const key of this.#pairCooldown.keys()) {
-      if (key.startsWith(`${h}:`) || key.endsWith(`:${h}`)) this.#pairCooldown.delete(key);
-    }
   }
 
   // ---- forces & mutation ------------------------------------------------------
@@ -230,8 +294,22 @@ export class PhysicsWorld {
    */
   setDensity(h: BodyHandle, kgPerM3: number): void {
     const rec = this.#recs.get(h);
-    if (!rec) return;
-    rec.collider.setDensity(kgPerM3);
+    if (!rec || rec.sideM === undefined) return;
+    /*
+     * Goes through the SAME law as creation (`cubeMassProperties`), not through
+     * `collider.setDensity`. Rapier's docs are explicit that setDensity "overrides any
+     * previous mass-properties set by setMassProperties", so the obvious one-liner here
+     * would have silently reverted this body to Rapier's inner-box approximation — a
+     * cube that weighed the right amount until you touched the purity slider, and 16.75 %
+     * too little afterwards. Exactly the failure mode this method's own comment warns of.
+     */
+    const mp = cubeMassProperties(rec.sideM, kgPerM3);
+    rec.collider.setMassProperties(
+      mp.mass,
+      ORIGIN,
+      { x: mp.inertia, y: mp.inertia, z: mp.inertia },
+      IDENTITY_ROTATION,
+    );
     /*
      * The recompute is NOT optional. Rapier propagates a collider's mass properties to
      * its body "at the next physics step, or manually via
@@ -252,7 +330,7 @@ export class PhysicsWorld {
   }
 
   /**
-   * Manual override. Normally CCD is driven by speed inside the step (`#clampSpeeds`) —
+   * Manual override. Normally CCD is driven per step by `#updateCcd` from swept motion —
    * callers should not need this, and TheHand deliberately no longer touches it.
    */
   setCcd(h: BodyHandle, enabled: boolean): void {
@@ -307,6 +385,19 @@ export class PhysicsWorld {
     }
   }
 
+  /**
+   * Direct velocity write. Not used by gameplay — the Hand works through forces so that
+   * mass is felt — but the calibration suite has to launch a body at an exact speed to
+   * infer a coefficient from its deceleration, and an impulse would have to be divided
+   * by a mass the test is trying to measure.
+   */
+  setVelocity(h: BodyHandle, linear: Vec3, angular?: Vec3): void {
+    const rec = this.#recs.get(h);
+    if (!rec) return;
+    rec.body.setLinvel(linear, true);
+    if (angular) rec.body.setAngvel(angular, true);
+  }
+
   // ---- reads ------------------------------------------------------------------
 
   /**
@@ -345,6 +436,32 @@ export class PhysicsWorld {
 
   massOf(h: BodyHandle): number {
     return this.#recs.get(h)?.massKg ?? 0;
+  }
+
+  /**
+   * Normal effective mass this body presents at a world-space contact, kg.
+   *
+   *     1/m_eff = 1/m + (r x n) . I^-1 (r x n)
+   *
+   * This is the inertia a contact actually feels, and it is NOT the body's mass unless
+   * the contact is dead in line with the centre of mass. Struck on a corner an ideal cube
+   * presents m/4, because it can rotate away from the blow.
+   *
+   * Public because it is the honest basis for any "how hard was that?" question — impact
+   * telemetry uses it (see `#drainImpacts`), and Drop/Crush will need it before they can
+   * claim a number. `n` is normalised here so callers cannot silently scale the answer.
+   */
+  normalEffectiveMassAt(h: BodyHandle, pointWorld: Vec3, normal: Vec3): number {
+    const rec = this.#recs.get(h);
+    if (!rec) return 0;
+    const len = Math.hypot(normal.x, normal.y, normal.z);
+    if (len === 0) return 0;
+    const n = { x: normal.x / len, y: normal.y / len, z: normal.z / len };
+    // Use the CURRENT centre of mass: this read is for callers asking about now, whereas
+    // `#drainImpacts` deliberately asks about the pre-step pose.
+    const com = at(rec.body);
+    const inv = effectiveInvMassAbout(rec.body, com, pointWorld, n);
+    return inv > 0 ? 1 / inv : 0;
   }
 
   isDynamic(h: BodyHandle): boolean {
@@ -398,32 +515,38 @@ export class PhysicsWorld {
 
   // ---- the step ---------------------------------------------------------------
 
+  /**
+   * One fixed step. The timestep is CONSTANT — it is never derived from what is in the
+   * world (14 PHY-04).
+   *
+   * The previous version chose a substep count from the world's fastest body and the
+   * world's smallest body, which are in general two different objects. Three things
+   * followed, all measured:
+   *
+   * 1. **Unrelated bodies changed each other's trajectories.** A 15" cube fell 15.0776 m
+   *    in one second alone and 15.0902 m with a 0.25" cube somewhere else in the scene —
+   *    12.6 mm of difference from an object it never touched, because the small body
+   *    shrank the substep and the finer gravity integration moved the big one.
+   * 2. **It did not actually bound swept motion.** The `< 1.5 m/s` early-out contradicted
+   *    the travel criterion it was supposed to enforce, and the 12-substep ceiling could
+   *    not satisfy that criterion above ~1.37 m/s for the smallest cube anyway.
+   * 3. **It tunnelled regardless.** Against a 10 mm plate it went straight through in 5
+   *    of 6 speed/size cases; pre-step CCD held all 6.
+   *
+   * So: fixed step, and swept motion is handled per body by CCD chosen BEFORE the step
+   * that needs it, from linear *and* angular sweep against that body's own size.
+   */
   step(dt: number, outImpacts: ImpactEvent[]): void {
-    /*
-     * Substepping (08 §7, 05): a body moving fast enough covers more than its own size
-     * in one 60 Hz step and the narrow phase never sees the contact.
-     *
-     * Measured at M0: a 1" cube at 18.8 m/s travels 0.313 m per step — 12x its own edge
-     * — and drove 58 mm into a 200 mm concrete slab before the solver pushed it back
-     * out. Against a thinner prop or another cube it goes straight through. The Hand can
-     * throw well past the threshold, so this is reachable in the Sandbox today, not just
-     * in the Drop Tower.
-     */
-    const substeps = this.#substepsFor(dt);
-    const sub = dt / substeps;
-    this.#world.timestep = sub;
-
-    for (let i = 0; i < substeps; i++) {
-      this.#snapshotVelocities();
-      this.#world.step(this.#events);
-      this.#simTimeMs += sub * 1000;
-      // Forces are cleared only after the LAST substep: a force applied for one fixed
-      // step should act across the whole of it, not just its first quarter.
-      if (i === substeps - 1) this.#clearAppliedForces();
-      this.#clampSpeeds();
-      this.#drainImpacts(outImpacts);
-    }
-
+    this.#world.timestep = dt;
+    // Order matters: clamp, then choose CCD from the speeds we are actually going to
+    // integrate, then step. Deciding CCD from POST-step speed (as this used to) leaves
+    // the first step over the threshold — the one that does the tunnelling — unprotected.
+    this.#clampSpeeds();
+    this.#updateCcd(dt);
+    this.#snapshotVelocities();
+    this.#world.step(this.#events);
+    this.#clearAppliedForces();
+    this.#drainImpacts(outImpacts);
     this.#nanWatchdog();
   }
 
@@ -449,42 +572,13 @@ export class PhysicsWorld {
   }
 
   /**
-   * How many substeps this step needs, from TRAVEL PER STEP vs the SMALLEST body —
-   * not from a fixed speed threshold.
+   * Absolute speed ceiling, applied BEFORE integration so it actually bounds travel.
    *
-   * 08 §10's "substep above 8 m/s" is the wrong shape, and measurably so: a 1" cube
-   * dropped 2 m lands at 6.4 m/s, sits *under* the threshold, gets one step, and moves
-   * 107 mm — four times its own width — straight through the floor surface. Meanwhile a
-   * 15" cube at the same speed is entirely safe. What matters is how far something moves
-   * relative to how big it is, and our sizes span 60:1.
-   *
-   * Measured: penetration went 98 mm -> a few mm at that speed once this was size-aware.
-   */
-  #substepsFor(dt: number): number {
-    let maxSpeedSq = 0;
-    let minHalf = Infinity;
-    for (const rec of this.#recs.values()) {
-      if (!rec.body.isDynamic()) continue;
-      const v = rec.body.linvel();
-      const sq = v.x * v.x + v.y * v.y + v.z * v.z;
-      if (sq > maxSpeedSq) maxSpeedSq = sq;
-      if (rec.halfExtent < minHalf) minHalf = rec.halfExtent;
-    }
-    if (minHalf === Infinity) return 1;
-    const speed = Math.sqrt(maxSpeedSq);
-    // Cheap early-out for the overwhelmingly common case of a slow or sleeping scene.
-    if (speed < config.loop.substepSpeedMps) return 1;
-    const travel = speed * dt;
-    const allowed = minHalf * config.loop.substepTravelFraction;
-    return Math.min(config.loop.maxSubsteps, Math.max(1, Math.ceil(travel / allowed)));
-  }
-
-  /**
-   * Hard speed ceiling (05) plus CCD lifecycle.
-   *
-   * CCD lives here rather than in TheHand because the Hand was disabling it on release
-   * — precisely when a thrown cube is fastest and needs it most (found by audit). Speed
-   * is the only thing that should decide, and only physics knows every body's speed.
+   * This is a fail-safe, not physics: it exists so a numerical blow-up cannot launch a
+   * body across the world in one step. Applied after the step (as it used to be) it was
+   * strictly worse than useless — a 1.5" cube given 6,000 N for one step moved 1.046 m
+   * during that step and *then* reported a tidy 50.0 m/s, so the cap neither prevented
+   * the swept-collision failure nor left the momentum honest (14 §4.6).
    */
   #clampSpeeds(): void {
     const maxV = config.stability.maxSpeedMps;
@@ -496,7 +590,52 @@ export class PhysicsWorld {
         const k = maxV / speed;
         rec.body.setLinvel({ x: v.x * k, y: v.y * k, z: v.z * k }, true);
       }
-      const wantCcd = speed > config.hand.ccdSpeedMps;
+    }
+  }
+
+  /**
+   * Choose CCD per body from the sweep it is ABOUT to make, relative to its own size.
+   *
+   * Both terms matter. A cube can be nearly stationary at its centre and still whip a
+   * corner through a plane: the corner sits sqrt(3) half-extents out, so its speed is
+   * `|v| + |w| * sqrt(3) * halfExtent`. The old test was post-step `|v| > 5 m/s`, which
+   * is blind to spin and always one step late.
+   *
+   * CCD lives here rather than in TheHand because the Hand was disabling it on release —
+   * precisely when a thrown cube is fastest and needs it most (found by audit).
+   */
+  #updateCcd(dt: number): void {
+    for (const rec of this.#recs.values()) {
+      if (!rec.body.isDynamic()) continue;
+      const v = rec.body.linvel();
+      const w = rec.body.angvel();
+
+      /*
+       * PREDICT the velocity this step will produce, do not read the one it starts with.
+       *
+       * Reading the current velocity is still one step late whenever a force is what
+       * makes the body fast. Measured: a 1.5" cube at rest given 6,000 N for one step
+       * moves 1.046 m during that step — it begins at zero, so a current-velocity test
+       * sees a stationary body and leaves CCD off for exactly the step that needed it.
+       * Adding `F/m` and gravity turns the test into a genuine forward prediction.
+       */
+      const invM = rec.body.invMass();
+      const f = rec.body.userForce();
+      const vx = v.x + (f.x * invM + this.#gravity.x) * dt;
+      const vy = v.y + (f.y * invM + this.#gravity.y) * dt;
+      const vz = v.z + (f.z * invM + this.#gravity.z) * dt;
+
+      // Same for spin. The inverse inertia is anisotropic in general, so take its largest
+      // diagonal term — this is a threshold test, and over-estimating only turns CCD on
+      // slightly early.
+      const I = rec.body.effectiveWorldInvInertia();
+      const invI = Math.max(I.m11, I.m22, I.m33);
+      const t = rec.body.userTorque();
+      const wMag = Math.hypot(w.x, w.y, w.z) + Math.hypot(t.x, t.y, t.z) * invI * dt;
+
+      const cornerR = rec.halfExtent * CORNER_OVER_HALF;
+      const sweep = (Math.hypot(vx, vy, vz) + wMag * cornerR) * dt;
+      const wantCcd = sweep > rec.halfExtent * config.stability.ccdSweepFraction;
       if (wantCcd !== rec.ccd) {
         rec.body.enableCcd(wantCcd);
         rec.ccd = wantCcd;
@@ -566,11 +705,32 @@ export class PhysicsWorld {
       const rel = { x: va.x - vb.x, y: va.y - vb.y, z: va.z - vb.z };
       const normalSpeedMps = rel.x * n.x + rel.y * n.y + rel.z * n.z;
 
-      // Reduced mass; a static partner is infinitely heavy, so μ = m_dynamic.
-      const ma = a.body.isDynamic() ? a.massKg : Infinity;
-      const mb = b.body.isDynamic() ? b.massKg : Infinity;
-      const mu = ma === Infinity ? mb : mb === Infinity ? ma : (ma * mb) / (ma + mb);
-      const energyJ = 0.5 * mu * normalSpeedMps * normalSpeedMps;
+      /*
+       * NORMAL EFFECTIVE MASS at this contact — not the reduced mass of two point
+       * masses (14 PHY-06).
+       *
+       *   1/m_eff = 1/mA + 1/mB + (rA x n)*IA^-1*(rA x n) + (rB x n)*IB^-1*(rB x n)
+       *
+       * The rotational terms are the whole point. A rigid cube struck on a CORNER can
+       * spin away from the blow, so it presents far less inertia to the contact than its
+       * mass: for an ideal cube, r = (s/2)(1,1,1) and I = m*s^2/6 give |r x n|^2 = s^2/2
+       * and a rotational term of 3/m, so m_eff = m/4. The old formula used the full m and
+       * therefore over-reported an ideal corner impact's energy by exactly 4x.
+       */
+      const invMassNormal =
+        effectiveInvMass(a, contact.point, n) + effectiveInvMass(b, contact.point, n);
+      const effectiveMassKg = invMassNormal > 0 ? 1 / invMassNormal : 0;
+      let energyJ = 0.5 * effectiveMassKg * normalSpeedMps * normalSpeedMps;
+
+      /*
+       * An impact can never dissipate more than the bodies actually had. m_eff is a
+       * contact-local quantity and the normal speed is read at one point of a manifold,
+       * so nothing in the algebra above forbids the product from exceeding the real
+       * pre-impact kinetic energy — clamp it to the budget rather than report an
+       * impossible number (14 §9, "Impact energy").
+       */
+      const budgetJ = kineticEnergy(a) + kineticEnergy(b);
+      if (energyJ > budgetJ) energyJ = budgetJ;
 
       // TWO SEPARATE CHANNELS, AND-ed, never OR-ed. An earlier draft emitted on
       // `forceN > 3 || energyJ > 0.005`, which fires forever under any resting cube
@@ -579,10 +739,10 @@ export class PhysicsWorld {
       if (energyJ <= config.impact.minEnergyJ) return;
       if (normalSpeedMps <= config.impact.minNormalSpeedMps) return;
 
-      const key = hA < hB ? `${hA}:${hB}` : `${hB}:${hA}`;
-      const last = this.#pairCooldown.get(key);
-      if (last !== undefined && this.#simTimeMs - last < config.impact.pairCooldownMs) return;
-      this.#pairCooldown.set(key, this.#simTimeMs);
+      // NO DEBOUNCE HERE. A per-pair cooldown used to live at this line; it is
+      // presentation, it belongs to the ear, and while it sat in the physics signal path
+      // it silently swallowed real rapid rebounds for every other consumer. It now lives
+      // in `fx/audio.ts` (14 PHY-06).
 
       // Report the dynamic body as `a`; a static partner reports as its SurfaceId.
       const aIsDyn = a.body.isDynamic();
@@ -594,27 +754,46 @@ export class PhysicsWorld {
         point: contact.point,
         normalSpeedMps,
         energyJ,
+        effectiveMassKg,
         forceN,
+        contactCount: contact.count,
       });
     });
   }
 
-  /** Deepest solver contact for a pair, in world space, with the manifold normal. */
-  #deepestContact(c1: RAPIER.Collider, c2: RAPIER.Collider): { point: Vec3; normal: Vec3 } | null {
-    let best: { point: Vec3; normal: Vec3 } | null = null;
+  /**
+   * Deepest solver contact for a pair, in world space, with the manifold normal and how
+   * many contacts it was chosen from.
+   *
+   * `count` is reported rather than hidden: Rapier's force event is an aggregate over the
+   * whole pair, and pinning it to one point is a simplification. A flat landing has four
+   * contacts sharing the load; a corner landing has one. Consumers that care can tell.
+   */
+  #deepestContact(
+    c1: RAPIER.Collider,
+    c2: RAPIER.Collider,
+  ): { point: Vec3; normal: Vec3; count: number } | null {
+    let best: { point: Vec3; normal: Vec3; count: number } | null = null;
     let bestDist = Infinity;
+    let total = 0;
     this.#world.contactPair(c1, c2, (manifold) => {
       const n = manifold.normal();
       const count = manifold.numSolverContacts();
+      total += count;
       for (let i = 0; i < count; i++) {
         const d = manifold.solverContactDist(i);
         if (d < bestDist) {
           const p = manifold.solverContactPoint(i);
           bestDist = d;
-          best = { point: { x: p.x, y: p.y, z: p.z }, normal: { x: n.x, y: n.y, z: n.z } };
+          best = {
+            point: { x: p.x, y: p.y, z: p.z },
+            normal: { x: n.x, y: n.y, z: n.z },
+            count: 0,
+          };
         }
       }
     });
+    if (best) (best as { count: number }).count = total;
     return best;
   }
 
@@ -638,12 +817,76 @@ export class PhysicsWorld {
     return this.#recs.size;
   }
 
+  /**
+   * The gravity this world runs at. Exposed so nothing downstream — a readout, a smoke
+   * test, a future scale — has to keep its own copy of g and watch it drift (14 PHY-14).
+   */
+  get gravityMps2(): number {
+    return GRAVITY_MPS2;
+  }
+
   free(): void {
     this.#events.free();
     this.#world.free();
     this.#recs.clear();
     this.#byCollider.clear();
   }
+}
+
+/**
+ * A body's contribution to the inverse normal effective mass at a contact:
+ *
+ *     1/m + (r x n) . I^-1 (r x n)
+ *
+ * A static body contributes 0 — it is infinitely heavy and cannot rotate, which is
+ * exactly what "the floor doesn't move" means in this algebra.
+ *
+ * `r` is measured from the PRE-STEP centre of mass for the same reason the velocities
+ * are: by the time this runs the solver has already moved everything.
+ */
+function effectiveInvMass(rec: Rec, point: Vec3, n: Vec3): number {
+  if (!rec.body.isDynamic()) return 0;
+  return effectiveInvMassAbout(rec.body, rec.prevCom, point, n);
+}
+
+/** The same, about an explicit centre of mass. Shared with `normalEffectiveMassAt`. */
+function effectiveInvMassAbout(body: RAPIER.RigidBody, com: Vec3, point: Vec3, n: Vec3): number {
+  if (!body.isDynamic()) return 0;
+  const rx = point.x - com.x;
+  const ry = point.y - com.y;
+  const rz = point.z - com.z;
+  // c = r x n
+  const cx = ry * n.z - rz * n.y;
+  const cy = rz * n.x - rx * n.z;
+  const cz = rx * n.y - ry * n.x;
+  // I^-1 is symmetric positive definite; Rapier hands it over as its upper triangle.
+  const I = body.effectiveWorldInvInertia();
+  const ix = I.m11 * cx + I.m12 * cy + I.m13 * cz;
+  const iy = I.m12 * cx + I.m22 * cy + I.m23 * cz;
+  const iz = I.m13 * cx + I.m23 * cy + I.m33 * cz;
+  return body.invMass() + (cx * ix + cy * iy + cz * iz);
+}
+
+/** Total kinetic energy of a body from the PRE-STEP snapshot: ½mv² + ½ωᵀIω. */
+function kineticEnergy(rec: Rec): number {
+  if (!rec.body.isDynamic()) return 0;
+  const v = rec.prevLin;
+  const w = rec.prevAng;
+  const translational = 0.5 * rec.massKg * (v.x * v.x + v.y * v.y + v.z * v.z);
+  // Rapier exposes the INVERSE inertia, so invert the principal axes to get ½ωᵀIω.
+  // The local frame is the cube's, and for our cubes I is isotropic, so working in the
+  // world frame with the effective inverse tensor is exact here and conservative
+  // elsewhere — this value is only ever used as an upper bound.
+  const I = rec.body.effectiveWorldInvInertia();
+  const invIx = I.m11;
+  const invIy = I.m22;
+  const invIz = I.m33;
+  const rotational =
+    0.5 *
+    ((invIx > 0 ? (w.x * w.x) / invIx : 0) +
+      (invIy > 0 ? (w.y * w.y) / invIy : 0) +
+      (invIz > 0 ? (w.z * w.z) / invIz : 0));
+  return translational + rotational;
 }
 
 /** v + ω×r from the PRE-STEP snapshot (see Rec.prevLin). */

@@ -100,16 +100,19 @@ export class App implements Stepper {
     });
 
     this.bus.on('select', ({ id }) => this.#select(id));
-    this.settings.subscribe((s) => {
-      this.audio.setMuted(!s.sound);
-      if (s.engraving !== this.render.engravingEnabled) {
-        this.render.setEngravingEnabled(s.engraving);
-        this.entities.refreshMaterials();
-      }
-    });
-    // The camera has to know about the UI, or a selected cube sits behind the sheet
-    // (12 §3). The layout class is the single source both read.
-    this.hud.layout.subscribe((s) => this.rig.setViewportOffset(s.offset.x, s.offset.y));
+    // Both of these return an unsubscribe, and both used to be dropped on the floor.
+    this.#teardown.push(
+      this.settings.subscribe((s) => {
+        this.audio.setMuted(!s.sound);
+        if (s.engraving !== this.render.engravingEnabled) {
+          this.render.setEngravingEnabled(s.engraving);
+          this.entities.refreshMaterials();
+        }
+      }),
+      // The camera has to know about the UI, or a selected cube sits behind the sheet
+      // (12 §3). The layout class is the single source both read.
+      this.hud.layout.subscribe((s) => this.rig.setViewportOffset(s.offset.x, s.offset.y)),
+    );
 
     this.labs = new LabManager({
       physics: this.physics,
@@ -264,16 +267,57 @@ export class App implements Stepper {
    * cube is already falling when you arrive, so the first thud costs zero clicks.
    */
   spawn(at?: Vec3): void {
-    const p = at ?? {
-      x: config.stage.trayCentre.x + (Math.random() * 2 - 1) * config.stage.trayScatterM,
-      y: config.stage.trayCentre.y,
-      z: config.stage.trayCentre.z + (Math.random() * 2 - 1) * config.stage.trayScatterM,
-    };
+    const p = at ?? this.#freeTraySlot(this.spec.sideM);
     const before = this.entities.size;
     this.entities.spawn({ ...this.spec }, p);
     if (before >= config.limits.maxCubes) {
       this.hud.toast(`Cube limit reached (${config.limits.maxCubes}) — oldest removed`);
     }
+  }
+
+  /**
+   * A drop point in the tray whose footprint clears every live cube (14 PHY-11).
+   *
+   * The old version picked `x`/`z` at random inside a fixed ±0.06 m square with no regard
+   * for the new cube's size. Two default spawns in a row could therefore start
+   * interpenetrating, and any cube wider than 0.12 m *had* to; the solver then resolves
+   * the overlap by inventing a separating impulse, which is a shove that came from
+   * nowhere and can knock over a stack that was standing perfectly well.
+   *
+   * Deterministic outward ring search rather than rejection sampling: it terminates, it
+   * does not depend on `Math.random` for correctness, and the fallback is a stated place
+   * rather than "wherever the last attempt happened to land".
+   */
+  #freeTraySlot(sideM: number): Vec3 {
+    const tray = config.stage.trayCentre;
+    const y = tray.y + sideM / 2;
+    const live: { x: number; z: number; half: number }[] = [];
+    for (const e of this.entities.all) {
+      live.push({ x: e.curr.p.x, z: e.curr.p.z, half: e.spec.sideM / 2 });
+    }
+    const clears = (x: number, z: number): boolean =>
+      live.every((o) => {
+        // AABB gap in the horizontal plane, with a small margin so contact is not overlap.
+        const need = o.half + sideM / 2 + 0.002;
+        return Math.abs(x - o.x) >= need || Math.abs(z - o.z) >= need;
+      });
+
+    if (clears(tray.x, tray.z)) return { x: tray.x, y, z: tray.z };
+    // Rings sized to the cube being placed, so a 15" cube steps out in 15" strides.
+    const step = Math.max(sideM + 0.004, config.stage.trayScatterM);
+    for (let ring = 1; ring <= 6; ring++) {
+      const r = ring * step;
+      for (let i = 0; i < ring * 8; i++) {
+        const a = (i / (ring * 8)) * Math.PI * 2;
+        const x = tray.x + Math.cos(a) * r;
+        const z = tray.z + Math.sin(a) * r;
+        if (Math.abs(x) > config.stage.floorHalfSizeM - sideM) continue;
+        if (Math.abs(z) > config.stage.floorHalfSizeM - sideM) continue;
+        if (clears(x, z)) return { x, y, z };
+      }
+    }
+    // Nowhere clear: stage it above the tray rather than inside whatever is there.
+    return { x: tray.x, y: tray.y + sideM * 2, z: tray.z };
   }
 
   reset(): void {
@@ -364,6 +408,9 @@ export class App implements Stepper {
 
   // ---- viewport -------------------------------------------------------------------
 
+  /** Everything that must be undone by `dispose()`, in the order it was set up. */
+  readonly #teardown: (() => void)[] = [];
+
   #bindResize(): void {
     const onResize = (): void => {
       this.render.resize();
@@ -374,7 +421,30 @@ export class App implements Stepper {
     // visualViewport, not just window: on iOS the two disagree while the toolbar
     // animates, and visualViewport is what actually tracks it (12 §2).
     window.visualViewport?.addEventListener('resize', onResize);
+    this.#teardown.push(() => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+    });
     onResize();
+  }
+
+  /**
+   * Idempotent teardown (14 ENG-03).
+   *
+   * One long-lived page never needed this, which is why it did not exist. Anything that
+   * mounts the app twice — hot reload, an embed, a mount/dispose/mount integration test —
+   * did, and without it each mount left behind live resize handlers, a settings
+   * subscription and a physics world.
+   */
+  dispose(): void {
+    this.loop.stop();
+    for (const off of this.#teardown.splice(0)) off();
+    this.input.dispose();
+    this.audio.dispose();
+    this.labs.teardown();
+    this.entities.clear();
+    this.physics.free();
   }
 
   start(): void {

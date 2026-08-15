@@ -1,4 +1,4 @@
-import type { CombineRule, MetalId } from '../types.ts';
+import type { MetalId } from '../types.ts';
 
 /**
  * The metal table (02 §3/§4). MVP-minimal: densities, contact coefficients and base
@@ -25,9 +25,15 @@ export interface MetalSpec {
   /** Linear sRGB base colour, metalness 1.0. */
   baseColorLinear: [number, number, number];
   roughness: number;
+  /**
+   * Kinetic mu of this metal against the REFERENCE METAL (dry, machined, unlubricated).
+   * A material-pair property — see `data/contact.ts` for the model that turns this and a
+   * surface's coefficient into the pair the solver produces.
+   */
   friction: number;
   /**
-   * Coefficient of restitution against a hard surface. NOT one shared value.
+   * Coefficient of restitution against the REFERENCE SURFACE (thick steel plate), flat
+   * face, low speed. A material-pair property, NOT one shared value.
    *
    * 08 §10 specified a single "metal CoR 0.5" for all five metals. Measured at M0, that
    * was wrong twice: 0.5 makes tungsten heavy alloy return ~22 % of its drop height off
@@ -38,11 +44,9 @@ export interface MetalSpec {
    *
    * WHA is dense and internally damped — the same property that makes its voice a dead
    * TUNK rather than a ring (02 §10) — so it belongs at the bottom of this range, and
-   * hardened ferrous metal at the top.
+   * hardened ferrous metal at the top, where it anchors the reference pair.
    */
   restitution: number;
-  /** See CombineRule. Metals damp, so they claim `min` and let a springy surface win. */
-  restitutionRule: CombineRule;
 }
 
 /**
@@ -103,7 +107,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     roughness: 0.35, // machined WHA is duller than a polished comparison metal
     friction: 0.45,
     restitution: 0.2, // dense, internally damped — the dead TUNK material
-    restitutionRule: 'min',
   },
   /**
    * Gold — 19,320 kg/m³ against tungsten heavy alloy's 17,000–18,500.
@@ -135,7 +138,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
      * mass that land completely differently, so the ear separates what the hand cannot.
      */
     restitution: 0.15,
-    restitutionRule: 'min',
   },
   Cu: {
     id: 'Cu',
@@ -148,7 +150,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     roughness: 0.25,
     friction: 0.45,
     restitution: 0.3, // soft, deforms readily, low rebound
-    restitutionRule: 'min',
   },
   Fe: {
     id: 'Fe',
@@ -161,7 +162,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     roughness: 0.25,
     friction: 0.45,
     restitution: 0.6, // hardened ferrous metal is the classic bouncy one
-    restitutionRule: 'min',
   },
   Ti: {
     id: 'Ti',
@@ -174,7 +174,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     roughness: 0.25,
     friction: 0.45,
     restitution: 0.55, // springy: high strength for its stiffness
-    restitutionRule: 'min',
   },
   Al: {
     id: 'Al',
@@ -187,7 +186,6 @@ export const METALS: Readonly<Record<MetalId, MetalSpec>> = {
     roughness: 0.25,
     friction: 0.45,
     restitution: 0.35, // moderate, and it dents — plastic deformation eats the energy
-    restitutionRule: 'min',
   },
 };
 

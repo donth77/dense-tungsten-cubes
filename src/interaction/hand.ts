@@ -113,11 +113,16 @@ export class TheHand {
    * Release is just "stop applying force" — the body keeps its solver velocity, so
    * throwing works with zero extra code.
    *
-   * `pointercancel` routes here too (12 §4). A notification shade or an incoming call
-   * cancels a pointer with no `pointerup`, and unhandled, The Hand keeps applying force
-   * to a cube attached to a finger that no longer exists.
+   * @param mode `'throw'` (the default) keeps that velocity. `'cancel'` zeroes it.
+   *
+   * The distinction is not cosmetic (14 ENG-02). `pointercancel` routes here too (12 §4):
+   * a notification shade or an incoming call cancels a pointer with no `pointerup`, and
+   * `Input.#onCancel` documented itself as giving "zero throw velocity by intent" while
+   * calling the same `release()` a deliberate throw uses. So an interrupted grab flung the
+   * cube at whatever the last solver velocity happened to be — the one case where the
+   * user certainly did not ask for a throw.
    */
-  release(): void {
+  release(mode: 'throw' | 'cancel' = 'throw'): void {
     const id = this.#heldId;
     if (id === null) return;
     const e = this.entities.get(id);
@@ -126,6 +131,11 @@ export class TheHand {
     if (!e) return;
     e.heldBy = null;
     this.physics.setAngularDamping(e.body, this.#restoreAngularDamping);
+    if (mode === 'cancel') {
+      // Drop where it is. Angular too — an interrupted grab should not leave the cube
+      // spinning any more than it should leave it flying.
+      this.physics.setVelocity(e.body, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    }
     const v = this.physics.velocityOf(e.body);
     this.bus.emit('release', {
       id,

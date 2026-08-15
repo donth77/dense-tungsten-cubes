@@ -48,7 +48,8 @@ async function tryLift(
       const risenMm = (e.curr.p.y - startY) * 1000;
       const out = {
         massKg: e.massKg,
-        weightN: e.massKg * 9.81,
+        // The one authoritative g, not a fourth copy of it (14 PHY-14).
+        weightN: e.massKg * app.physics.gravityMps2,
         appliedN: app.hand.appliedN,
         meter: app.hand.meter,
         risenMm,

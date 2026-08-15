@@ -294,9 +294,14 @@ export class RenderWorld {
   // ---- factories used by EntityStore -----------------------------------------
 
   /**
-   * One shared geometry per size. The chamfer radius is ~3 % of the side — the machined
-   * edge the real product has, and the thing that makes a render read as metal stock
-   * rather than a programmer's cube.
+   * One shared geometry per size. The chamfer radius is the machined edge the real
+   * product has, and the thing that makes a render read as metal stock rather than a
+   * programmer's cube.
+   *
+   * The radius comes from `config.geometry.chamferFraction`, which `core/physics.ts`
+   * reads too — the collider is a matching round cuboid. They were allowed to disagree
+   * until 14 PHY-07: the mesh was chamfered and the collider was sharp, so the corner you
+   * could see was never the corner that touched the floor.
    */
   /**
    * Acquire the shared geometry for a cube of this size. **Every call must be paired
@@ -315,7 +320,7 @@ export class RenderWorld {
     const key = Math.round(sideM * 1e4);
     let geo = this.#geometryCache.get(key);
     if (!geo) {
-      geo = new RoundedBoxGeometry(sideM, sideM, sideM, 2, sideM * 0.03);
+      geo = new RoundedBoxGeometry(sideM, sideM, sideM, 2, sideM * config.geometry.chamferFraction);
       this.#geometryCache.set(key, geo);
     }
     this.#geometryRefs.set(key, (this.#geometryRefs.get(key) ?? 0) + 1);

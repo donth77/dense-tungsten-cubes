@@ -209,6 +209,8 @@ export class AudioBus {
   #live = new Map<VoiceId, AudioBufferSourceNode[]>();
   #muted = false;
   #unlocking = false;
+  /** `a|b` -> `performance.now()` of the last thud played for that pair. See `#onImpact`. */
+  #pairCooldown = new Map<string, number>();
 
   constructor(private readonly bus: EventBus) {
     this.bus.on('impact', this.#onImpact);
@@ -269,6 +271,21 @@ export class AudioBus {
 
   readonly #onImpact = (ev: ImpactEvent): void => {
     if (!this.#ctx || this.#muted) return;
+
+    /*
+     * Per-pair debounce, so one landing is one thud rather than a machine-gun burst.
+     *
+     * This used to live inside `PhysicsWorld.#drainImpacts`, where it gated the event for
+     * EVERY consumer — a real rapid rebound simply never reached the bus (14 PHY-06).
+     * Debouncing is an ear problem, so it is solved at the ear. Keyed on the ordered pair
+     * and evaluated on the audio clock, which is the clock a listener actually has.
+     */
+    const key = pairKey(ev);
+    const now = performance.now();
+    const last = this.#pairCooldown.get(key);
+    if (last !== undefined && now - last < config.audio.pairCooldownMs) return;
+    this.#pairCooldown.set(key, now);
+
     const voice = this.#pickVoice(ev);
     if (!voice) return;
 
@@ -383,6 +400,11 @@ export class AudioBus {
   }
   unregisterEntity(id: number): void {
     this.#hints.delete(id);
+    // Drop this entity's debounce entries too, or the map grows for the whole session and
+    // a recycled pairing inherits a stale timestamp.
+    for (const key of this.#pairCooldown.keys()) {
+      if (key.startsWith(`${id}|`) || key.endsWith(`|${id}`)) this.#pairCooldown.delete(key);
+    }
   }
 
   #pickVoice(ev: ImpactEvent): VoiceId | null {
@@ -413,9 +435,18 @@ export class AudioBus {
   dispose(): void {
     document.removeEventListener('visibilitychange', this.#onVisibility);
     this.bus.off('impact', this.#onImpact);
+    this.#pairCooldown.clear();
+    this.#hints.clear();
     void this.#ctx?.close();
     this.#ctx = null;
   }
+}
+
+/** Ordered pair key for the audio debounce — `a|b` and `b|a` must be the same landing. */
+function pairKey(ev: ImpactEvent): string {
+  const b = String(ev.b);
+  const a = String(ev.a);
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 // ---- synthesis ----------------------------------------------------------------

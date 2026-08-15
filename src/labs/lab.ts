@@ -67,12 +67,27 @@ export class LabManager {
     return this.#activeId;
   }
 
+  /**
+   * Monotonic transition token. A lab module is dynamic-`import`ed, so two quick switches
+   * are two outstanding promises with no ordering guarantee between them — the slower
+   * one can resolve last and build a lab nobody asked for, over the top of the one that
+   * is on screen (14 ENG-04). Only the newest request is allowed to commit.
+   */
+  #transition = 0;
+
   async switchTo(id: LabId): Promise<void> {
     if (this.#activeId === id) return;
+    const token = ++this.#transition;
     this.#active?.teardown();
+    this.#active = null;
+    this.#activeId = null;
     this.ctx.ui.setControls('', []);
 
     const lab = await loadLab(id);
+    // Someone asked for a different lab while this one was loading. Drop it on the floor:
+    // it was never built, so there is nothing to tear down.
+    if (token !== this.#transition) return;
+
     lab.build(this.ctx);
     this.#active = lab;
     this.#activeId = id;

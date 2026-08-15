@@ -16,6 +16,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:physics": "vitest run --config vitest.physics.config.ts",
     "smoke": "playwright test",
     "lint": "eslint src tests && prettier --check .",
     "format": "prettier --write .",

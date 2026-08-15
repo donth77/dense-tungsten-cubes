@@ -8,17 +8,6 @@
 
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
-/**
- * How a material's contact coefficients combine with its partner's.
- *
- * Expressed as a plain string, not Rapier's enum, because `data/` must never import
- * Rapier (08 §5.1) — `core/physics.ts` maps these to `CoefficientCombineRule`.
- *
- * Rapier resolves a pair by taking the higher-priority rule of the two colliders
- * (average < min < multiply < max), which is what lets a springy surface outrank a
- * damped cube while a damped cube outranks a hard floor.
- */
-export type CombineRule = 'average' | 'min' | 'max';
 export type SurfaceId = 'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice';
 
 /** Monotonically increasing, never reused within a session. */
@@ -65,10 +54,24 @@ export interface ImpactEvent {
   point: Vec3;
   /** Closing speed along the contact normal, from pre-step cached velocities *at the contact point*. */
   normalSpeedMps: number;
-  /** ½·μ·v_n² with reduced mass μ (08 §8.1). */
+  /**
+   * ½·m_eff·v_n², where m_eff is the **normal effective mass at this contact** — it
+   * includes both bodies' inverse mass AND their inverse inertia about the contact
+   * offset, so a corner strike reports the ~m/4 a rigid cube actually presents rather
+   * than its full mass (14 PHY-06). Clamped to the pre-impact kinetic-energy budget: this
+   * can never exceed the energy the bodies actually had.
+   */
   energyJ: number;
-  /** Rapier's contact-force magnitude. Rides along as data; never authorises an impact by itself. */
+  /** The normal effective mass used for `energyJ`, kg. Exposed so tests can check it. */
+  effectiveMassKg: number;
+  /**
+   * Rapier's contact-force magnitude for the whole **pair**, not for `point`. It is an
+   * aggregate over every contact in the manifold and it varies with solver settings, so
+   * it is data only — it never authorises an impact by itself, and it is not a stress.
+   */
   forceN: number;
+  /** Solver contacts in the manifold. >1 means `point` is one of several (14 PHY-06). */
+  contactCount: number;
 }
 
 export interface EventMap {

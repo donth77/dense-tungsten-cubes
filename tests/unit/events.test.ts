@@ -40,7 +40,9 @@ describe('EventBus', () => {
       point: { x: 0, y: 0, z: 0 },
       normalSpeedMps: 3,
       energyJ: 1,
+      effectiveMassKg: 0.22,
       forceN: 100,
+      contactCount: 4,
     });
     expect(fn).not.toHaveBeenCalled();
   });

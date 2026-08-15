@@ -63,7 +63,6 @@ async function boot(): Promise<void> {
   const imf = gui.addFolder('Impact gate');
   imf.add(config.impact, 'minEnergyJ', 0, 0.05, 0.001).name('min energy (J)');
   imf.add(config.impact, 'minNormalSpeedMps', 0, 0.5, 0.005).name('min closing (m/s)');
-  imf.add(config.impact, 'pairCooldownMs', 0, 300, 5).name('pair cooldown (ms)');
   imf.close();
 
   const af = gui.addFolder('Audio');
@@ -71,6 +70,8 @@ async function boot(): Promise<void> {
   af.add(config.audio, 'gainRange', 1, 6, 0.1);
   af.add(config.audio, 'pitchExp', 0, 1.5, 0.05).name('pitch exponent');
   af.add(config.audio, 'subLayerMinEnergyJ', 0, 40, 0.5).name('W sub layer > (J)');
+  // Presentation debounce, not a physics gate — see config.audio.pairCooldownMs.
+  af.add(config.audio, 'pairCooldownMs', 0, 300, 5).name('pair cooldown (ms)');
   af.add(config.audio, 'masterGain', 0, 1, 0.02);
   af.close();
 
@@ -84,7 +85,7 @@ async function boot(): Promise<void> {
       `spec    <b>${spawner.metal}</b> ${spawner.sizeIn}" ` +
       `${spawner.metal === 'W' ? `@ ${spawner.purityPctW}% W` : ''}\n` +
       `mass    <b>${m.toFixed(m < 1 ? 4 : 2)} kg</b>  (${(m * 2.20462).toFixed(2)} lb)\n` +
-      `weight  <b>${(m * 9.81).toFixed(1)} N</b>   cap ${app.hand.capN} N\n` +
+      `weight  <b>${(m * config.physics.gravityMps2).toFixed(1)} N</b>   cap ${app.hand.capN} N\n` +
       `bodies  ${app.entities.size}    fps <b>${app.loop.fps.toFixed(0)}</b>\n` +
       `hand    ${held ? `holding #${held.id}` : '—'}  meter <b>${(app.hand.meter * 100).toFixed(0)}%</b>\n` +
       `impact  ${imp ? `${imp.energyJ.toFixed(3)} J @ ${imp.normalSpeedMps.toFixed(2)} m/s` : '—'}`;

@@ -7,19 +7,34 @@
  */
 
 export const config = {
+  /** The one authoritative physical constant. Nothing may re-declare g (14 PHY-14). */
+  physics: {
+    /**
+     * Standard gravity, exactly 9.80665 m/s² by definition (NIST SP 811 B.8). The app
+     * previously carried 9.81 in physics, in the calibration page and in tests; three
+     * copies of a constant is how they drift apart, and the definition costs nothing.
+     */
+    gravityMps2: 9.80665,
+  },
+
+  geometry: {
+    /**
+     * Cube edge chamfer, as a fraction of the side. The RENDERER and the COLLIDER both
+     * read this and must never disagree (14 PHY-07): the mesh had a 3 % chamfer while
+     * physics used a sharp cuboid, so first contact, tipping threshold, rocking and the
+     * corner-impact lever arm were all computed for a shape nobody could see.
+     *
+     * The advertised outer side stays exactly `sideM` either way — the chamfer is cut
+     * INTO the cube, it does not grow it.
+     */
+    chamferFraction: 0.03,
+  },
+
   loop: {
     /** Fixed physics timestep. 60 Hz, always — decoupled from the display refresh. */
     DT: 1 / 60,
     /** Guards the tab-return spiral: never simulate more than a quarter-second of catch-up. */
     accumulatorClampS: 0.25,
-    /**
-     * Substepping is SIZE-AWARE, not speed-thresholded (see PhysicsWorld#substepsFor).
-     * `substepSpeedMps` is only a cheap early-out so a slow scene skips the check.
-     */
-    substepSpeedMps: 1.5,
-    /** Max distance a body may travel per substep, as a fraction of its half-extent. */
-    substepTravelFraction: 0.6,
-    maxSubsteps: 12,
   },
 
   hand: {
@@ -83,8 +98,6 @@ export const config = {
      */
     minEnergyJ: 0.005,
     minNormalSpeedMps: 0.05,
-    /** Per body-pair, so one landing is one thud rather than a machine-gun burst. */
-    pairCooldownMs: 60,
   },
 
   audio: {
@@ -95,6 +108,16 @@ export const config = {
     pitchRefSideM: 0.0508, // 2″
     pitchExp: 0.4,
     pitchJitter: 0.04,
+    /**
+     * Per body-pair debounce, so one landing is one thud rather than a machine-gun burst.
+     *
+     * This lives in `audio` and not in `impact` on purpose (14 PHY-06): it is
+     * presentation debouncing, and while it sat inside the physics signal path it also
+     * suppressed *real* rapid rebounds from anything else reading impacts — a lab, a
+     * damage model, a test. Physics now reports every qualifying contact; the ear gets
+     * the filtered version.
+     */
+    pairCooldownMs: 60,
     /** Tungsten's sub-bass signature layers in above this energy. */
     subLayerMinEnergyJ: 5,
     /** Per-voice, oldest-steals. */
@@ -103,15 +126,13 @@ export const config = {
   },
 
   stability: {
-    /** Cubes below 1″ get extra damping — the small-cube stability lever (05). */
-    smallCubeSideM: 0.0254,
-    smallCubeLinearDamping: 0.05,
-    smallCubeAngularDamping: 0.1,
     /**
-     * 08 §11 step 8 says raise this to 8 if the jitter gate demands it. It didn't — and
-     * measured at M0, 8 changed nothing for the extreme-mass-ratio case either (the
-     * 0.25" Al cube sank identically at 4 and at 8). The limiting factor there is contact
-     * tolerance, not solver convergence, so the extra iterations were pure cost. Stays 4.
+     * Solver iterations. Measured across 4/8/16/32 with and without extra internal PGS
+     * iterations (14 §4.2): none of them move the extreme-size-ratio case at all
+     * (55.93 % → 55.89 % at 8, 55.92 % at 16), while 16 costs 3.9x the step time. The
+     * limiting factor is neither convergence nor contact tolerance — `allowedLinearError`
+     * of exactly 0 still leaves 54.4 % — it is the size ratio itself. See
+     * `SUPPORTED_STACK_SIZE_RATIO`. Stays 4, now for a measured reason.
      */
     solverIterations: 4,
     /**
@@ -126,16 +147,72 @@ export const config = {
      * We can afford to tighten because the jitter measurement came back 500x inside
      * budget (1 um drift against a 0.5 mm gate), leaving plenty of solver headroom.
      */
-    allowedLinearError: 0.0002, // 0.2 mm
-    predictionDistance: 0.0005, // 0.5 mm
-    /**
-     * The ×4 world-scale escalation, wired from day one so the decision is one constant
-     * rather than a refactor (08 §2.7). Rapier's own `lengthUnit` is tried first (05).
+    /*
+     * Tightened again after 14 PHY-03. Resting penetration is very nearly CONSTANT in
+     * absolute terms — it is set by these tolerances, not by the body — so it is the
+     * smallest cube that pays for a loose value. Swept, with settled drift measured at
+     * every step (all of them 0.00000 mm, so none of this costs jitter):
+     *
+     *   err / predict     0.25" sink     1" sink     4" sink
+     *   0.0002 / 0.0005      6.465 %      1.638 %     0.326 %   <- previous
+     *   0.0001 / 0.0002      4.889 %      1.244 %     0.228 %
+     *   0.00005 / 0.0001     2.862 %      0.715 %     0.262 %   <- now
+     *   0.00002 / 0.00005    2.389 %      0.597 %     0.232 %
+     *
+     * 0.05 mm keeps most of the available gain while leaving an order of magnitude of
+     * headroom above the point where the solver starts fighting itself.
      */
-    WORLD_SCALE: 1,
-    /** Rapier's length_units — the sanctioned first escalation before scaling the world. */
+    allowedLinearError: 0.00005, // 0.05 mm
+    predictionDistance: 0.0001, // 0.1 mm
+    /**
+     * Rapier's length_units. Swept 0.01 / 0.1 / 1 against the size-ratio case: it buys
+     * 1.5 percentage points (55.93 % → 54.37 %) and changes nothing qualitatively, so it
+     * stays at 1 and the world stays in real metres.
+     *
+     * `WORLD_SCALE` used to live here as "the ×4 escalation, wired from day one". It was
+     * never read by anything (14 PHY-14); a stability lever that no code consults is not
+     * a lever, so it is gone rather than left as reassurance.
+     */
     lengthUnit: 1,
+    /**
+     * Absolute speed ceiling — a fail-safe against a NaN-adjacent blow-up, not physics.
+     *
+     * Applied BEFORE the step, so it actually bounds how far a body can move in one
+     * (50/60 = 0.833 m). It used to be applied after integration, which measured out as a
+     * body travelling 1.046 m in the step it was "limited" to 50 m/s for: the cap could
+     * not prevent the swept-collision failure it existed for, and silently deleted
+     * momentum afterwards (14 §4.6).
+     */
     maxSpeedMps: 50,
+    /**
+     * CCD is enabled for a body when its predicted sweep this step exceeds this fraction
+     * of its own half-extent. Sweep includes the corner's ANGULAR travel, so a slow but
+     * fast-spinning cube is protected too — centre-of-mass speed alone misses it.
+     */
+    ccdSweepFraction: 0.5,
+    /**
+     * Rapier's `maxCcdSubsteps`, which defaults to 1. Measured against a 10 mm plate: the
+     * old adaptive-substep strategy tunnelled straight through in 5 of 6 speed/size cases
+     * (0.25" and 1" cubes at 30 and 50 m/s); pre-step CCD held all 6. 4 substeps also cut
+     * the worst first-frame overlap of a 4" cube at 40 m/s from 56.0 mm to 0.65 mm.
+     */
+    maxCcdSubsteps: 4,
+    /**
+     * Soft-CCD prediction distance, as a fraction of a body's half-extent. **Zero, and
+     * deliberately so.**
+     *
+     * It looks like free insurance — a cheaper predictive contact alongside full CCD —
+     * and it measured as a disaster for restitution: a 1" W cube on concrete rebounded at
+     * e = 0.055 with it against a modelled 0.150, because the solver treats the approach
+     * as an already-established contact and absorbs the closing velocity before the
+     * bounce is computed. It bought nothing in exchange: against a 10 mm plate, full CCD
+     * held all six speed/size cases with and without it.
+     *
+     * Left as a named constant rather than deleted because it is a real Rapier feature
+     * worth re-testing if the contact model changes; anything above 0 must be re-measured
+     * against `tests/physics/restitution.test.ts` before it ships.
+     */
+    softCcdFraction: 0,
   },
 
   stage: {

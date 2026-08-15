@@ -40,8 +40,10 @@ interface DenseDebug {
   colliders(on: boolean): void;
   /** The M0 go/no-go (08 §11 step 8). */
   jitterTest(seconds?: number): Promise<JitterResult[]>;
-  /** The extreme-mass-ratio probe (08 §14): 0.7 g under 996 kg. */
-  massRatioTest(seconds?: number): Promise<JitterResult[]>;
+  /** The extreme-size-ratio probe (08 §14). Expected to FAIL — see docs/14 PHY-03. */
+  massRatioTest(seconds?: number, bigIn?: number): Promise<JitterResult[]>;
+  /** The stack at the published limit: an upper cube 2x the lower one's side. */
+  envelopeTest(seconds?: number, lowerIn?: number): Promise<JitterResult[]>;
   config: typeof config;
 }
 
@@ -70,7 +72,8 @@ export async function attachDebug(app: App): Promise<void> {
     reset: () => app.reset(),
     colliders: (on) => overlay.setEnabled(on),
     jitterTest: (seconds = 10) => jitterTest(app, seconds),
-    massRatioTest: (seconds = 10) => massRatioTest(app, seconds),
+    massRatioTest: (seconds = 10, bigIn = 4) => massRatioTest(app, seconds, bigIn),
+    envelopeTest: (seconds = 10, lowerIn = 1) => envelopeTest(app, seconds, lowerIn),
     config,
   };
 
@@ -147,8 +150,10 @@ class ColliderOverlay {
       live.add(e.id);
       if (this.#boxes.has(e.id)) continue;
       const s = e.spec.sideM;
-      // The *collider* is a sharp cuboid; the mesh has a 3 % chamfer. Seeing the two
-      // disagree at the corners is the point of the overlay.
+      // The outer box of the collider. Since 14 PHY-07 the collider is a ROUND cuboid
+      // whose outer half-extent is exactly `s/2`, so this outline is the collider's true
+      // bounding box and the mesh should sit inside it, touching at the face centres.
+      // It used to be a genuine mismatch — sharp collider, chamfered mesh.
       const src = new THREE.BoxGeometry(s, s, s);
       const box = new THREE.LineSegments(new THREE.EdgesGeometry(src), this.#mat);
       src.dispose();
@@ -175,8 +180,10 @@ class ColliderOverlay {
  * Spawn small cubes at rest and a 3-stack, let them settle, then measure how far they
  * drift over `seconds`. Pass is < 0.5 mm and no visible wobble (08 §11 step 8).
  *
- * Failure escalation, in order: numSolverIterations 4 -> 8, then the small-cube damping,
- * then `world.lengthUnit`, then `WORLD_SCALE = 4`. Record whichever was needed.
+ * The escalation ladder this used to name (solver iterations -> damping -> lengthUnit ->
+ * WORLD_SCALE) is gone. Every rung was measured at 14 and none of them moved the number
+ * that mattered; `WORLD_SCALE` was never read by any code at all. What DID work was
+ * tightening the contact tolerances — see config.stability.allowedLinearError.
  */
 async function jitterTest(app: App, seconds: number): Promise<JitterResult[]> {
   app.hand.release();
@@ -219,24 +226,34 @@ async function jitterTest(app: App, seconds: number): Promise<JitterResult[]> {
 }
 
 /**
- * The extreme-mass-ratio probe (08 §14): the size slider spans 0.25" Al (~0.7 g) to
- * 15" W95 (~996 kg), a 1.4-million-to-one range, and stacking across it is exactly what
- * players will try. Impulse solvers lose the light body first.
+ * The extreme-size-ratio probe (08 §14). Stacking across the size slider is exactly what
+ * players will try, and impulse solvers lose the small body first.
  *
- * Honest outcome to accept: a 0.7 g aluminium cube under a 19 kg tungsten one gets
- * squashed flat in reality too. "It sinks in" can be theatre rather than a bug.
+ * **This test is expected to FAIL, and that is the point.** Measured at 14: the lower
+ * cube's centre ends up *below* the supporting surface, and no solver setting recovers
+ * it — 4/8/16/32 iterations, 1/4/8 internal PGS iterations, `lengthUnit` 1/0.1/0.01,
+ * `allowedLinearError` down to exactly 0, and 1/4/12 substeps all land between 54 % and
+ * 56 % sink. The limit is the SIZE ratio, not the mass ratio: at equal size a 6.67x
+ * density ratio barely registers.
+ *
+ * The supported envelope has TWO limits: the lower cube must be at least 0.75", and the
+ * upper cube no more than 2x its side. Run `window.__dense.envelopeTest()` for the
+ * passing side of that line.
+ *
+ * @param bigIn side of the upper cube, inches. Defaults to 4" — the case 14 measured.
  */
-async function massRatioTest(app: App, seconds: number): Promise<JitterResult[]> {
+async function massRatioTest(app: App, seconds: number, bigIn = 4): Promise<JitterResult[]> {
   app.hand.release();
   app.entities.clear();
 
   const smallSide = 0.25 * IN;
-  const bigSide = 4 * IN;
+  const bigSide = bigIn * IN;
   console.warn(
-    `[dense] mass ratio: 0.25" Al = ${(cubeMassKg('Al', smallSide) * 1000).toFixed(2)} g under ` +
-      `4" W95 = ${cubeMassKg('W', bigSide).toFixed(2)} kg — ratio ${Math.round(
-        cubeMassKg('W', bigSide) / cubeMassKg('Al', smallSide),
-      ).toLocaleString()}:1`,
+    `[dense] size ratio ${(bigIn / 0.25).toFixed(0)}:1 (mass ratio ${Math.round(
+      cubeMassKg('W', bigSide) / cubeMassKg('Al', smallSide),
+    ).toLocaleString()}:1) — 0.25" Al = ${(cubeMassKg('Al', smallSide) * 1000).toFixed(2)} g ` +
+      `under ${bigIn}" W95 = ${cubeMassKg('W', bigSide).toFixed(2)} kg. ` +
+      `EXPECTED TO FAIL above a 2:1 size ratio — see docs/14 PHY-03.`,
   );
 
   const plan = [
@@ -247,9 +264,9 @@ async function massRatioTest(app: App, seconds: number): Promise<JitterResult[]>
       at: new THREE.Vector3(0, smallSide / 2, 0),
     },
     {
-      label: '4" W95 (on top)',
+      label: `${bigIn}" W95 (on top)`,
       metal: 'W' as MetalId,
-      sizeIn: 4,
+      sizeIn: bigIn,
       at: new THREE.Vector3(0, smallSide + bigSide / 2, 0),
       restsOn: 0,
     },
@@ -259,6 +276,48 @@ async function massRatioTest(app: App, seconds: number): Promise<JitterResult[]>
     return app.entities.spawn({ ...app.spec }, { x: p.at.x, y: p.at.y, z: p.at.z }).id;
   });
 
+  return measureDrift(app, plan, ids, seconds);
+}
+
+/**
+ * The stack at the PUBLISHED limit — an upper cube exactly 2x the lower one's side.
+ *
+ * This is the companion to `massRatioTest`: same shape, inside the envelope instead of
+ * outside it, so the two together show where the line is rather than only that a line
+ * exists. Expected to pass for `lowerIn >= 0.75`; below that a cube cannot reliably
+ * support anything at all, including an identical cube, and the UPPER cube is the one to
+ * watch — it slides off onto the floor while the lower one sits there looking fine.
+ */
+async function envelopeTest(app: App, seconds: number, lowerIn: number): Promise<JitterResult[]> {
+  app.hand.release();
+  app.entities.clear();
+
+  const upperIn = lowerIn * 2;
+  const lower = lowerIn * IN;
+  const upper = upperIn * IN;
+  console.warn(
+    `[dense] envelope: ${lowerIn}" under ${upperIn}" (size ratio 2:1, the published limit)`,
+  );
+
+  const plan = [
+    {
+      label: `${lowerIn}" W95 (lower)`,
+      metal: 'W' as MetalId,
+      sizeIn: lowerIn,
+      at: new THREE.Vector3(0, lower / 2, 0),
+    },
+    {
+      label: `${upperIn}" W95 (upper)`,
+      metal: 'W' as MetalId,
+      sizeIn: upperIn,
+      at: new THREE.Vector3(0, lower + upper / 2, 0),
+      restsOn: 0,
+    },
+  ];
+  const ids = plan.map((p) => {
+    app.spec = { metal: p.metal, sideM: p.sizeIn * IN, purityPctW: 95 };
+    return app.entities.spawn({ ...app.spec }, { x: p.at.x, y: p.at.y, z: p.at.z }).id;
+  });
   return measureDrift(app, plan, ids, seconds);
 }
 
@@ -338,8 +397,8 @@ async function measureDrift(
           1,
         )}% of side over ${seconds}s`
       : `[dense] JITTER GATE FAIL — ${drifted.length} drifting (>0.5 mm), ${sunk.length} sunk ` +
-          `(>5% of side). Escalate: solver iters 8 -> contact tolerances -> damping -> ` +
-          `lengthUnit -> WORLD_SCALE 4`,
+          `(>5% of side). Contact tolerance is the lever that measurably moves this ` +
+          `(config.stability.allowedLinearError); solver iterations do not.`,
   );
   return results;
 }

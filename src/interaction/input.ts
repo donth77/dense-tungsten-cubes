@@ -109,7 +109,9 @@ export class InputRouter {
     c.addEventListener('wheel', this.#onWheel, { passive: false });
     // Suppresses iOS's own ~500 ms long-press callout, which collides with our 450 ms
     // long-press spawn and would otherwise summon a text magnifier (12 §2).
-    c.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Named, not an inline arrow: an anonymous listener cannot be removed, so this one
+    // outlived every dispose() and leaked one per mount (14 ENG-03).
+    c.addEventListener('contextmenu', this.#onContextMenu);
     window.addEventListener('keydown', this.#onKey);
   }
 
@@ -121,8 +123,10 @@ export class InputRouter {
     c.removeEventListener('pointercancel', this.#onCancel);
     c.removeEventListener('pointerleave', this.#onLeave);
     c.removeEventListener('wheel', this.#onWheel);
+    c.removeEventListener('contextmenu', this.#onContextMenu);
     window.removeEventListener('keydown', this.#onKey);
     this.#clearLongPress();
+    this.#pointers.clear();
   }
 
   // ---- rays --------------------------------------------------------------------
@@ -282,11 +286,14 @@ export class InputRouter {
   readonly #onCancel = (e: PointerEvent): void => {
     const st = this.#pointers.get(e.pointerId);
     this.#finishPointer(e.pointerId);
-    // Zero throw velocity by intent: the cube drops where it was rather than being
-    // flung by whatever the last pointer delta happened to be.
-    if (st?.grabbing) this.hand.release();
+    // Zero throw velocity by intent: the cube drops where it was rather than being flung
+    // by whatever the last pointer delta happened to be. `'cancel'` is what makes that
+    // true — this used to call the same release a deliberate throw uses (14 ENG-02).
+    if (st?.grabbing) this.hand.release('cancel');
     this.#setCursor('');
   };
+
+  readonly #onContextMenu = (e: Event): void => e.preventDefault();
 
   /** Leaving the canvas must not strand a `grab` cursor over the rest of the page. */
   readonly #onLeave = (): void => {
