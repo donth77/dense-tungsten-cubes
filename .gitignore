@@ -12,6 +12,7 @@ dist/
 
 # Internal design docs — local only, not part of the public repo
 docs/
+.claude/
 
 # Playwright
 test-results/
