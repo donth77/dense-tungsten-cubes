@@ -289,6 +289,14 @@ export class PhysicsWorld {
     out.z = v.z;
   }
 
+  /** The same for angular velocity — a cube can rock or spin in place at |v| ≈ 0. */
+  readAngularVelocityInto(h: BodyHandle, out: Vec3): void {
+    const w = this.#must(h).body.angvel();
+    out.x = w.x;
+    out.y = w.y;
+    out.z = w.z;
+  }
+
   setTransform(h: BodyHandle, p: Vec3, zeroVelocity = false): void {
     const rec = this.#recs.get(h);
     if (!rec) return;

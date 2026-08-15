@@ -4,7 +4,7 @@ import { cubeMassKg } from '../data/metals.ts';
 import type { BodyHandle, CubeSpec, EntityId, Transform, Vec3 } from '../types.ts';
 import type { EventBus } from './events.ts';
 import type { PhysicsWorld } from './physics.ts';
-import { SELECTION_INFLATE, selectionOpacityForSpeed } from './render.ts';
+import { SELECTION_INFLATE, SelectionFade, selectionMotionSpeed } from './render.ts';
 import type { RenderWorld } from './render.ts';
 
 export interface Entity {
@@ -36,6 +36,8 @@ export class EntityStore {
   #nextId: EntityId = 1;
   /** Drives the corner-bracket marker only; `app.ts` owns what "selected" means. */
   #selectedId: EntityId | null = null;
+  /** Shown only while the selected cube is at rest — see SelectionFade. */
+  readonly #fade = new SelectionFade();
   /** Reused by cullBelow() — see the note there about allocating at 60 Hz. */
   readonly #doomed: EntityId[] = [];
 
@@ -45,6 +47,8 @@ export class EntityStore {
   readonly #vB = new THREE.Vector3();
   readonly #qA = new THREE.Quaternion();
   readonly #qB = new THREE.Quaternion();
+  /** Angular velocity of the *selected* cube only — read once a step, never per entity. */
+  readonly #spin: Vec3 = { x: 0, y: 0, z: 0 };
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -124,8 +128,13 @@ export class EntityStore {
 
   /** Points the corner-bracket marker at a cube, or hides it. */
   setSelected(id: EntityId | null): void {
-    this.#selectedId = id !== null && this.#map.has(id) ? id : null;
-    if (this.#selectedId === null) this.render.selection.visible = false;
+    const next = id !== null && this.#map.has(id) ? id : null;
+    if (next === this.#selectedId) return;
+    this.#selectedId = next;
+    // A new cube starts its own fade from scratch — otherwise it would inherit whatever
+    // the last one had, and a click on a resting cube could land mid-fade-out.
+    this.#fade.reset();
+    if (next === null) this.render.selection.visible = false;
   }
 
   get selectedId(): EntityId | null {
@@ -226,22 +235,32 @@ export class EntityStore {
   }
 
   /**
+   * Step 8 of the fixedStep contract: decide whether the selected cube is at rest, and
+   * advance the marker's fade accordingly.
+   *
+   * Driven from the FIXED step rather than the render frame, so "how long has this cube
+   * been still" is measured in simulation time — the same 200 ms on a 30 Hz phone as on
+   * a 120 Hz desktop. `lastVel` was latched at step 5; angular velocity is read here for
+   * the one selected body, which is 60 reads a second rather than 60 per cube.
+   */
+  updateSelectionFade(dt: number): void {
+    const e = this.#selectedId === null ? undefined : this.#map.get(this.#selectedId);
+    if (!e) return;
+    this.physics.readAngularVelocityInto(e.body, this.#spin);
+    const speed = selectionMotionSpeed(e.lastVel, this.#spin, e.spec.sideM);
+    this.#fade.update(speed, e.heldBy !== null, dt);
+  }
+
+  /**
    * The marker rides the *interpolated* mesh transform, not the fixed-step one — read
    * from `curr` it would visibly lag the cube it is supposed to be attached to.
    */
   #syncSelection(): void {
     const marker = this.render.selection;
     const e = this.#selectedId === null ? undefined : this.#map.get(this.#selectedId);
-    if (!e) {
-      marker.visible = false;
-      return;
-    }
-    // Fades out while the cube is moving so it never sits on top of a collision.
-    // `lastVel` is already latched every step, so this costs nothing.
-    const v = e.lastVel;
-    const opacity = selectionOpacityForSpeed(Math.hypot(v.x, v.y, v.z));
+    const opacity = e ? this.#fade.opacity : 0;
     marker.visible = opacity > 0.01;
-    if (!marker.visible) return;
+    if (!e || !marker.visible) return;
     (marker.material as THREE.LineBasicMaterial).opacity = opacity;
     marker.position.copy(e.mesh.position);
     marker.quaternion.copy(e.mesh.quaternion);

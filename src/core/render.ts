@@ -6,7 +6,7 @@ import { astmClassLabel, METALS } from '../data/metals.ts';
 import { makeEngraving } from './engraving.ts';
 import type { EngravedMaps } from './engraving.ts';
 import { SURFACES } from '../data/surfaces.ts';
-import type { MetalId, SurfaceId } from '../types.ts';
+import type { MetalId, SurfaceId, Vec3 } from '../types.ts';
 
 /**
  * RenderWorld — renderer, scene, lights, environment, resize, quality (08 §8.3).
@@ -47,30 +47,90 @@ const SELECTION_INFLATE = 1.06;
 const SELECTION_ARM = 0.24;
 /** `--acc` from tokens.css. Hardcoded like `--bg` above: data/ and core/ can't read CSS. */
 const SELECTION_COLOR = 0xff6b1f;
-/** m/s. Below this a cube is resting (Rapier's own sleep threshold territory). */
-const SELECTION_FADE_START = 0.02;
-/** m/s. Anything moving this fast is doing the thing you are meant to be watching. */
-const SELECTION_FADE_END = 0.35;
+/**
+ * m/s of *corner* speed below which a cube counts as still. 2× Rapier's own sleep
+ * threshold, so anything the solver has put to sleep is comfortably inside it — and
+ * everything else is "moving" no matter how gently.
+ */
+const SELECTION_STILL_MPS = 0.02;
+/** Seconds of unbroken stillness before the brackets are allowed back. */
+const SELECTION_SETTLE_S = 0.2;
+/** Seconds to fade in once settled, and to fade out once anything moves. */
+const SELECTION_FADE_IN_S = 0.16;
+const SELECTION_FADE_OUT_S = 0.06;
 
 /**
- * How strongly the selection brackets draw at a given speed: full at rest, gone in
- * motion.
+ * How fast the cube is *visibly* moving — an upper bound on the speed of its furthest
+ * corner, `|v| + |ω|·r` with r the half-diagonal.
+ *
+ * The angular term is the point. A cube rocking on one edge, or spun on the spot by a
+ * corner grab, has a linear velocity of nearly zero while plainly moving on screen; a
+ * linear-only test leaves the brackets on at full strength, tumbling with it. Adding the
+ * two rather than composing them (`|v + ω×r|`) deliberately forbids the cancellation
+ * that would let a rolling cube read as still at the one instant its contact corner is
+ * stationary.
+ *
+ * Scaling by the cube's own size keeps one threshold honest across the 0.25"–15" range:
+ * 1 rad/s is a lazy turn on a 15" block and a blur on a 0.25" one.
+ */
+export function selectionMotionSpeed(v: Vec3, spin: Vec3, sideM: number): number {
+  const halfDiagonal = sideM * 0.866;
+  return Math.hypot(v.x, v.y, v.z) + Math.hypot(spin.x, spin.y, spin.z) * halfDiagonal;
+}
+
+/**
+ * The selection brackets' opacity over time: shown only while their cube is at rest.
  *
  * The impact is the product. A bright accent-orange cage wrapped around a cube at the
- * exact moment it lands competes with the one event the whole toy exists to show, so
- * the marker gets out of the way and comes back when there is something to label.
+ * exact moment it lands competes with the one event the whole toy exists to show — so
+ * the marker labels a cube that has *come to rest* and gets out of the way for anything
+ * else, dragging included. A cube in hand is moving by definition, even when the pointer
+ * is holding still: it is under continuous control, the info card and the force meter
+ * are already saying which cube it is, and brackets that blink on every time the drag
+ * pauses are worse than no brackets at all.
  *
- * A continuous ramp rather than a still/moving switch, deliberately. A binary rule needs
- * hysteresis and a timer to survive contact with reality — a cube settling onto a stack,
- * or rocking on one edge, crosses any fixed threshold repeatedly and would strobe. Here
- * that same jitter produces a few percent of opacity wobble, which nobody can see.
+ * The timing is deliberately asymmetric — leave at once, come back slowly:
  *
- * A 2" cube dropped from the tray lands at ~2.8 m/s, so the brackets are long gone
- * before contact.
+ *   moving -> 0 over 60 ms, and the settle clock resets to zero
+ *   still  -> nothing for 200 ms, then up to 1 over 160 ms
+ *
+ * That asymmetry is what replaces a hysteresis band. A cube settling onto a stack or
+ * rocking on an edge re-trips the motion test every few frames, and each trip zeroes the
+ * clock, so it never reaches the 200 ms it needs to start fading in — no strobing, from
+ * timing alone rather than from a wide speed ramp that left the brackets half-visible
+ * through the whole of a slow drag.
  */
-export function selectionOpacityForSpeed(speedMps: number): number {
-  const t = (speedMps - SELECTION_FADE_START) / (SELECTION_FADE_END - SELECTION_FADE_START);
-  return 1 - Math.min(1, Math.max(0, t));
+export class SelectionFade {
+  #opacity = 0;
+  #stillS = SELECTION_SETTLE_S;
+
+  get opacity(): number {
+    return this.#opacity;
+  }
+
+  /**
+   * Point the fade at a new cube. The settle clock starts *satisfied*, because clicking
+   * a cube that is already sitting there has to answer immediately — the 200 ms exists
+   * to outlast a cube's own jitter, not to delay the response to a tap.
+   */
+  reset(): void {
+    this.#opacity = 0;
+    this.#stillS = SELECTION_SETTLE_S;
+  }
+
+  /** @param dt fixed-step seconds — see `EntityStore.updateSelectionFade`. */
+  update(motionSpeedMps: number, held: boolean, dt: number): number {
+    if (held || motionSpeedMps > SELECTION_STILL_MPS) {
+      this.#stillS = 0;
+      this.#opacity = Math.max(0, this.#opacity - dt / SELECTION_FADE_OUT_S);
+      return this.#opacity;
+    }
+    this.#stillS += dt;
+    if (this.#stillS >= SELECTION_SETTLE_S) {
+      this.#opacity = Math.min(1, this.#opacity + dt / SELECTION_FADE_IN_S);
+    }
+    return this.#opacity;
+  }
 }
 
 export class RenderWorld {
@@ -449,8 +509,8 @@ function makeSelectionMarker(): THREE.LineSegments {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   const mesh = new THREE.LineSegments(
     geo,
-    // transparent, so the marker can fade out while its cube is in motion — see
-    // selectionOpacityForSpeed().
+    // transparent, so the marker can fade out the moment its cube moves — see
+    // SelectionFade.
     new THREE.LineBasicMaterial({ color: SELECTION_COLOR, toneMapped: false, transparent: true }),
   );
   mesh.visible = false;

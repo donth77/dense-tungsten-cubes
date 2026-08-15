@@ -24,15 +24,19 @@ test.describe('removing a cube', () => {
     const selected = await page.evaluate(async () => {
       const app = window.__dense!.app;
       const cube = [...app.entities.all][0]!;
-      // Wait for it to actually settle: the marker fades out while a cube is moving, so
-      // testing it mid-drop would be testing the wrong state.
+      // Wait for it to actually settle: the marker only shows on a cube at rest, so
+      // testing it mid-drop would be testing the wrong state. Rotation counts — a cube
+      // rocking onto its face has almost no linear velocity and is plainly still moving.
       for (let i = 0; i < 60; i++) {
         const v = cube.lastVel;
-        if (Math.hypot(v.x, v.y, v.z) < 0.01) break;
+        const w = app.physics.angularVelocityOf(cube.body);
+        if (Math.hypot(v.x, v.y, v.z) < 0.01 && Math.hypot(w.x, w.y, w.z) < 0.05) break;
         await new Promise((r) => setTimeout(r, 50));
       }
       app.bus.emit('select', { id: cube.id });
-      await new Promise((r) => setTimeout(r, 120));
+      // Long enough for the fade-in, which is deliberately quick on a cube that is
+      // already at rest — a tap has to answer immediately.
+      await new Promise((r) => setTimeout(r, 250));
       const marker = app.render.selection;
       return {
         cardShown: getComputedStyle(document.querySelector('.infocard')!).display !== 'none',

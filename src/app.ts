@@ -306,6 +306,9 @@ export class App implements Stepper {
     //    impact event carries entity ids, and culling first could hand a listener an
     //    id whose voice the audio bus has already unregistered.
     this.entities.cullBelow(config.stage.killPlaneY);
+    // 8. Advance the selection marker's fade — last, so it never spends a step tracking
+    //    a cube that step 7 has already swept off the slab.
+    this.entities.updateSelectionFade(dt);
   }
 
   renderStep(alpha: number, dtFrameS: number): void {
