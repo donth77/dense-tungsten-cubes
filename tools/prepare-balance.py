@@ -123,25 +123,19 @@ BEAM_HALF_X = max(p['sz'][0] for p in groups['beam']) / 2
 PAN_C = groups['leftPan'][0]['c']
 PAN_HALF_X = groups['leftPan'][0]['sz'][0] / 2
 
-# Each part is scaled to ITS OWN physics target, not all of them by one factor.
+# ONE UNIFORM SCALE, as 15 §6.1 asks for, chosen so the beam matches `config.weigh.balance.armM`.
 #
-# 15 §6.1 asks for a uniform rescale, and that was measured: the asset's own ratios give a
-# 0.254 m arm against a 0.273 m drop, and a balance built to them threw a 1 kg cube off the
-# pan instead of pinning at its stop. The physics numbers in `config.weigh.balance` carry a
-# calibration sweep behind them, so the asset is fitted to them rather than the other way
-# round. The per-part scales differ by about 15 %, which nobody can see, and it means the
-# drawn instrument is exactly the size of the simulated one.
-TARGET = {
-    'armM': 0.37,          # keep in step with config.weigh.balance
-    'panRadiusM': 0.115,
-    'pivotHeightM': 0.42,
-}
-SCALE = {
-    'beam': TARGET['armM'] / BEAM_HALF_X,
-    'leftPan': TARGET['panRadiusM'] / PAN_HALF_X,
-    'rightPan': TARGET['panRadiusM'] / PAN_HALF_X,
-    'stand': TARGET['pivotHeightM'] / (PIVOT_Y - STAND_BOTTOM),
-}
+# An earlier pass scaled each part separately, on the conclusion that the asset's own
+# proportions broke the balance dynamics. That conclusion was wrong: the test behind it ran
+# with a 0.3 kg pan, and a 0.3 kg pan flips to 178 degrees under one 2 in tungsten cube
+# whatever the proportions are. With a 2 kg pan the asset's ratios are fine — and they are
+# BETTER than the hand-picked numbers, because the model's dish is 43 % of its beam length,
+# which at a 0.74 m beam is a 0.32 m pan. That fits the seven 2 in aluminium cubes of 15 §1's
+# signature demonstration in a 3x3 with room to spare; the 0.23 m pan taken from §5.1's
+# pre-asset seed table did not.
+TARGET_ARM = 0.37          # keep in step with config.weigh.balance.armM
+SCALE_ALL = TARGET_ARM / BEAM_HALF_X
+SCALE = {k: SCALE_ALL for k in ('beam', 'leftPan', 'rightPan', 'stand')}
 
 ORIGIN = {
     'stand': [0.0, PIVOT_Y, 0.0],
@@ -255,4 +249,8 @@ print(f"dropped {dropped} chain-link meshes")
 print(f"triangles {kept_tris:,} (was 46,584)   textures {len(out['images'])} at {TEXTURE_PX}px")
 print(f"{os.path.getsize(SRC)/1e6:.2f} MB -> {os.path.getsize(DST)/1e6:.3f} MB")
 print()
-print("per-part scale: " + ", ".join(f"{k} {v:.4f}" for k, v in SCALE.items()))
+print(f"uniform scale {SCALE_ALL:.5f} -> these belong in config.weigh.balance:")
+print(f"  armM          {BEAM_HALF_X*SCALE_ALL:.4f}")
+print(f"  panRadiusM    {PAN_HALF_X*SCALE_ALL:.4f}")
+print(f"  pivotHeightM  {(PIVOT_Y-STAND_BOTTOM)*SCALE_ALL:.4f}")
+print(f"  dropM (asset) {(PIVOT_Y-PAN_C[1])*SCALE_ALL:.4f}")

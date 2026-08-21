@@ -406,7 +406,22 @@ export const config = {
 
     balance: {
       beamKg: 1.4,
-      panKg: 0.3,
+      /*
+       * 15 §6.1 seeds 0.3 kg and calls the assembly mass a calibration seed. It has to be
+       * much heavier here, because this app's loads are not a kitchen balance's: a 2 in
+       * tungsten cube is 2.36 kg, and a 0.3 kg dish hit by 8x its own mass does not tilt,
+       * it FLIPS. Measured max pan tilt from one off-centre 2 in W cube:
+       *
+       *     0.3 kg -> 52-178 deg (fully inverted), cube never stays
+       *     1.0 kg -> 14-124 deg, sometimes
+       *     2.0 kg -> 8.9-29 deg, cube stays every time
+       *
+       * Equal pans cancel side to side, so mass costs nothing in accuracy — but it does
+       * cost sensitivity, because heavy pans at the beam tips add rotational inertia. 1.4
+       * is the compromise: stable enough to hold a loaded pan, light enough that the
+       * signature demonstration still reads.
+       */
+      panKg: 1.4,
       /*
        * THE PHYSICS IS THE SOURCE OF TRUTH HERE, and the asset is fitted to it.
        *
@@ -423,8 +438,13 @@ export const config = {
        * simulated one the same size.
        */
       armM: 0.37,
-      /** Rope length, hook ring to pan rim. */
-      dropM: 0.2,
+      /**
+       * Rope length, hook ring to pan rim. The asset hangs its pans at 0.3976; this is
+       * shorter on purpose — a longer pendulum swings slower and settles later, and the
+       * chains are DRAWN from the live anchors rather than modelled, so shortening them
+       * costs nothing visually.
+       */
+      dropM: 0.26,
       /*
        * The beam/yoke COM sits `keelDropM · keelMassFraction` = 84 mm below the pivot.
        * Gravity restores the beam; nothing else does (15 §6.2 — no motor, no angle spring).
@@ -441,8 +461,16 @@ export const config = {
        *      difference looks identical. At 84 mm the same 5 % rests at -8.2 deg: plainly
        *      tipped, plainly not pinned, and visibly less than the -12.2 deg a 2x load gives.
        */
-      keelDropM: 0.12,
-      keelMassFraction: 0.7,
+      /*
+       * COM 36 mm below the pivot. Sensitivity and stability trade directly, and this is
+       * the point that serves the demonstration: 15 §1's one 2 in W95 against seven 2 in
+       * aluminium (about 5 % heavier) settles at -2.06 deg with every cube staying in its
+       * pan. Swept across pan masses 0.8-2.0 kg and COM depths 18-54 mm, the demo reads
+       * -1.8 to -2.2 deg almost everywhere, so this is a broad optimum rather than a
+       * knife edge.
+       */
+      keelDropM: 0.06,
+      keelMassFraction: 0.6,
       /**
        * Viscous pivot torque, N·m·s/rad, clamped like the cell damper. Measured after a
        * 1.2 rad/s nudge: 0.3 swings for 4.8 s (past 15 §6.1's 2–3 s target), 1.5 kills the
@@ -451,6 +479,19 @@ export const config = {
       pivotDamping: 0.75,
       /** Beam travel. The stop holds to within ~0.19 deg of solver tolerance, as 15 §13.2 allows. */
       limitDeg: 12,
+      /*
+       * APPROACH BRAKING — the last few degrees before the stop, where damping ramps up.
+       *
+       * A hard joint limit delivers a violent impulse, and that impulse is what throws a
+       * cube out of the pan: load one side with the other empty and the beam accelerates
+       * across its whole travel and slams. Measured, no pan mass fixes it — 0.6 kg through
+       * 4 kg all lose the cube, because the pan is not the problem.
+       *
+       * A real balance answers this with ARRESTMENT: the beam is locked while you load it.
+       * This is the cheap equivalent — the beam eases into its stop instead of hitting it.
+       */
+      stopApproachDeg: 4,
+      stopBrakingDamping: 40,
       /** Per pan (15 §1). Physical fit and load capacity are deliberately separate facts. */
       capacityKgPerPan: 10,
 
@@ -460,8 +501,15 @@ export const config = {
        * transfers unchanged — and puts the pans at a height a camera framing the floor
        * can actually see.
        */
-      pivotHeightM: 0.42,
-      panRadiusM: 0.115,
+      /*
+       * All three come from ONE uniform scale of the prepared asset (0.50636), reported by
+       * tools/prepare-balance.py. The dish is 0.32 m across because that is what the model
+       * is: 43 % of its beam length. It needs to be — 15 §1's signature demonstration puts
+       * SEVEN 2 in aluminium cubes in one pan, and seven 2 in cubes are a 0.152 m square
+       * that will not sit in the 0.23 m dish §5.1's seed table asked for.
+       */
+      pivotHeightM: 0.6834,
+      panRadiusM: 0.16,
       panThicknessM: 0.004,
       /**
        * Shallow, per 15 §6.3 — but not so shallow that a 2 in cube walks out of the dish
@@ -469,18 +517,39 @@ export const config = {
        * rim's job is to catch a slide, not to contain a topple.
        */
       panRimHeightM: 0.012,
-      /** The hook-ring triangle the three ropes of each bridle hang from. */
-      hookRingM: 0.02,
+      /**
+       * The hook-ring triangle the three ropes of each bridle hang from.
+       *
+       * Wider than it looks like it should be, and measured: a narrow ring makes a bridle
+       * that barely resists tilt, because three ropes converging on almost one point leave
+       * the pan free to rotate under it. At a 2 kg pan, widening 20 mm -> 50 mm took the
+       * worst pan tilt from 25.9 deg to 8.9.
+       */
+      hookRingM: 0.05,
+      /*
+       * STIRRUP HEIGHT — how far ABOVE the dish the three ropes attach.
+       *
+       * This is what stops a pan flipping, and it is the difference between a pan and a
+       * plate on strings. The ropes used to land on the dish's top face, which is level
+       * with its own centre of mass, and a body suspended at its centre of mass is
+       * neutrally stable in tilt: it will happily turn over. Real balance pans hang from a
+       * bail that rises above the dish, putting the suspension above the centre of gravity
+       * so gravity rights it.
+       */
+      panStirrupM: 0.075,
+
       /** Column and base, measured off the prepared asset so collider and mesh agree. */
-      columnRadiusM: 0.022,
-      baseRadiusM: 0.0988,
+      columnRadiusM: 0.036,
+      baseRadiusM: 0.16,
       baseThicknessM: 0.008,
       /**
-       * How far out in Z each half of the counterweight sits. It has to CLEAR the column
-       * — a keel on the centreline lives inside the stand, and the solver's answer to two
-       * overlapping bodies was to slam an empty balance to its stop.
+       * How far out in Z each half of the counterweight sits. It has to CLEAR the column,
+       * i.e. exceed `columnRadiusM + KEEL_HALF` — a keel that overlaps the stand makes the
+       * solver shove the two apart, and an EMPTY balance then rests degrees off level.
+       * This has bitten twice: once on the centreline, once after the column was widened
+       * to match the asset and the keel was left where it was.
        */
-      keelOffsetZM: 0.038,
+      keelOffsetZM: 0.062,
 
       /*
        * Bridle losses, on the PANS ONLY (15 §6.1). Never on player cubes — 14 PHY-05

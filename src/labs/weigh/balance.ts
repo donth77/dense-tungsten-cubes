@@ -44,6 +44,7 @@ export class BalanceInstrument {
   #pans!: [BodyHandle, BodyHandle];
   #state: BalanceState;
   #alive = true;
+  #braking = false;
   #usingAsset = false;
   /** Placeholder meshes, so a swap can free them the moment the real asset lands. */
   readonly #placeholders = new Set<THREE.Object3D>();
@@ -201,7 +202,7 @@ export class BalanceInstrument {
      * damping was never the problem.
      */
     const splay = B.hookRingM * Math.abs(1 - rimScale);
-    const ropeLength = Math.hypot(splay, B.dropM - B.panThicknessM);
+    const ropeLength = Math.hypot(splay, B.dropM - B.panStirrupM);
     for (const [ax, az] of ring) {
       for (const side of [0, 1] as const) {
         const sign = side === 0 ? -1 : 1;
@@ -210,7 +211,7 @@ export class BalanceInstrument {
             bodyA: this.#beam,
             bodyB: this.#pans[side],
             anchorA: { x: sign * (B.armM + ax), y: 0, z: az },
-            anchorB: { x: sign * ax * rimScale, y: B.panThicknessM, z: az * rimScale },
+            anchorB: { x: sign * ax * rimScale, y: B.panStirrupM, z: az * rimScale },
             maxLengthM: ropeLength,
           }),
         );
@@ -239,10 +240,30 @@ export class BalanceInstrument {
    * level, gravity took it there (15 §6.2).
    */
   beforePhysics(): void {
-    // Intentionally empty: the pivot friction is implicit (set at build) and there is no
-    // motor. Kept so the instrument still satisfies the pre-step half of the contract and
-    // has an obvious home if it ever needs one.
-    return;
+    /*
+     * Approach braking, and nothing else. There is still no motor: this only ever REMOVES
+     * energy, it cannot choose a side, and it does nothing at all until the beam is within
+     * a few degrees of a stop it is already heading for.
+     *
+     * Without it the beam crosses its whole travel under an unbalanced load and slams the
+     * joint limit, and the impulse throws the pan's cube onto the floor. Measured across
+     * pan masses from 0.6 kg to 4 kg, the cube left every time — the pan was never the
+     * problem, the stop was.
+     */
+    const { physics } = this.ctx;
+    const q = physics.transformOf(this.#beam).q;
+    const angleDeg = (2 * Math.atan2(q.z, q.w) * 180) / Math.PI;
+    const intoStop = Math.abs(angleDeg) - (B.limitDeg - B.stopApproachDeg);
+    if (intoStop <= 0) {
+      if (this.#braking) {
+        physics.setAngularDamping(this.#beam, B.pivotDamping);
+        this.#braking = false;
+      }
+      return;
+    }
+    const t = Math.min(1, intoStop / B.stopApproachDeg);
+    physics.setAngularDamping(this.#beam, B.pivotDamping + B.stopBrakingDamping * t * t);
+    this.#braking = true;
   }
 
   afterPhysics(dt: number): void {
@@ -330,10 +351,23 @@ export class BalanceInstrument {
     add(panShape(), this.#pans[0]);
     add(panShape(), this.#pans[1]);
 
-    // The counterweight, drawn where it actually is. Without these the restoring moment
-    // comes from mass nobody can see, and 15 §8.2 asks for mass behaviour that agrees
-    // with visible construction.
+    /*
+     * The counterweight, drawn where it actually is — 15 §8.2 asks for mass behaviour that
+     * agrees with visible construction, and without this the restoring moment comes from
+     * mass nobody can see.
+     *
+     * Drawn as a FORK, not as two loose blocks. The first version put a bare cube either
+     * side of the column with nothing joining them to the beam, and they read exactly as
+     * they looked: two grey boxes floating next to the instrument.
+     */
     for (const z of [B.keelOffsetZM, -B.keelOffsetZM]) {
+      const stem = new THREE.BoxGeometry(KEEL_HALF * 0.5, B.keelDropM, KEEL_HALF * 0.5);
+      stem.translate(0, -B.keelDropM / 2, z);
+      this.#disposables.push(stem);
+      const arm = new THREE.Mesh(stem, steel);
+      arm.castShadow = true;
+      beamGroup.add(arm);
+
       const geo = new THREE.BoxGeometry(KEEL_HALF * 2, KEEL_HALF * 2, KEEL_HALF * 2);
       this.#disposables.push(geo);
       const bob = new THREE.Mesh(geo, steel);
@@ -380,7 +414,7 @@ export class BalanceInstrument {
         const sign = side === 0 ? -1 : 1;
         v.set(sign * (B.armM + ax), 0, az).applyMatrix4(beamObj.matrixWorld);
         pos.setXYZ(i++, v.x, v.y, v.z);
-        v.set(sign * ax * rimScale, B.panThicknessM, az * rimScale).applyMatrix4(
+        v.set(sign * ax * rimScale, B.panStirrupM, az * rimScale).applyMatrix4(
           panObjs[side]!.matrixWorld,
         );
         pos.setXYZ(i++, v.x, v.y, v.z);

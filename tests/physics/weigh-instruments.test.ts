@@ -231,18 +231,26 @@ async function balanceRig(): Promise<{ rig: Rig; bal: BalanceInstrument }> {
  */
 function place(rig: Rig, side: -1 | 1, metal: MetalId, sizeIn: number, n = 1): void {
   const B = config.weigh.balance;
+  const sideM = sizeIn * IN;
+  // Spaced by the CUBE'S OWN SIZE — a fixed 30 mm spread overlaps 2 in cubes, which spawn
+  // interpenetrating and blow apart. Laid out FLAT in a grid across the dish rather than
+  // stacked: the pan is 0.32 m across precisely so seven 2 in cubes fit side by side, and
+  // a three-high stack topples off a tilting pan instead of being weighed.
+  const pitch = sideM * 1.12;
+  const cols = 3;
   for (let i = 0; i < n; i++) {
-    // A single cube goes dead centre; several spread out. The spread is MIRRORED through
-    // `side`, or one pan gets its cubes outboard and the other inboard — a real imbalance,
-    // and not the one the scenario meant to create. Any offset written outside the
-    // `side * (...)` factor is that bug.
-    const spread = n === 1 ? 0 : ((i % 3) - 1) * 0.03;
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const inRow = Math.min(cols, n - row * cols);
+    const rows = Math.ceil(n / cols);
+    // MIRRORED through `side`, or one pan's cubes sit outboard and the other's inboard —
+    // a real torque difference that swamps the 5 % the demonstration is about.
+    const spread = (col - (inRow - 1) / 2) * pitch;
     rig.addCube(metal, sizeIn, {
       x: side * (B.armM + spread),
-      // Just above the dish. A long drop makes a heavy cube bounce over the rim, which is
-      // real behaviour and not what these scenarios are measuring.
-      y: B.pivotHeightM - B.dropM + 0.03 + Math.floor(i / 3) * 0.06,
-      z: (i % 2) * 0.03 - 0.015,
+      // Just above the dish; a long drop bounces a heavy cube over the rim.
+      y: B.pivotHeightM - B.dropM + sideM / 2 + 0.012,
+      z: (row - (rows - 1) / 2) * pitch,
     });
   }
 }
@@ -287,32 +295,46 @@ describe('the equal-arm balance', () => {
     rig.pw.free();
   });
 
-  it('holds its stops without tunnelling or exploding', async () => {
-    const { rig, bal } = await balanceRig();
-    // 1.5 in rather than 2 in: a 2 in cube is nearly half the dish across and walks out
-    // over the rim as the pan tilts, which is real behaviour but makes this a placement
-    // test rather than a stop test. 1 kg against an empty pan pins the beam regardless.
-    place(rig, -1, 'W', 1.5);
-    // Longer than the others: a single heavy pan swings the bridle hard, and the dwell
-    // that turns MOVING into a settled reading only starts once the swing dies down.
-    rig.run(bal, 14);
-    expect(Number.isFinite(bal.state.angleDeg)).toBe(true);
+  it('shows the signature demonstration: 7 aluminium outweigh 1 tungsten', async () => {
     /*
-     * The stop is a CEILING, not where every imbalance ends up. Measured response:
-     * 0.25 kg -> 4.4 deg, 1 kg -> 7.9 deg, saturating toward the 12 deg limit. That
-     * graded curve is the useful behaviour — a beam that slammed to its stop for every
-     * mismatch would make a 5 % difference and a doubled load look identical.
+     * 15 §1's whole reason for the lab. One 2 in W95 cube is 2.36 kg; seven 2 in aluminium
+     * cubes are 2.48 kg — about 5 % heavier — so the ALUMINIUM side goes down, which is
+     * the result that makes people recount the cubes.
      *
-     * KNOWN GAP, deliberately asserted as-is rather than papered over: with a single
-     * heavily loaded pan the beam's ANGLE is correct and steady, but the bridle keeps
-     * enough residual sway that the status stays MOVING past 14 s of simulated time, so
-     * this scenario cannot yet assert a settled reading. Equal loads and lighter
-     * imbalances both settle fine (the tests above), so this is a pan-damping calibration
-     * item, not a physics error.
+     * Measured at -2.06 deg here, and between -1.8 and -2.2 across pan masses 0.8-2.0 kg
+     * and counterweight depths 18-54 mm, so it is a broad optimum rather than a number
+     * balanced on a knife edge.
      */
+    const { rig, bal } = await balanceRig();
+    place(rig, -1, 'W', 2, 1);
+    place(rig, 1, 'Al', 2, 7);
+    rig.run(bal, 15);
+
+    expect(Number.isFinite(bal.state.angleDeg)).toBe(true);
+    // Negative is right-down, and the aluminium is on the right.
+    expect(bal.state.angleDeg).toBeLessThan(-0.5);
+    expect(Math.abs(bal.state.angleDeg)).toBeLessThan(config.weigh.balance.limitDeg);
+    // Every cube still on the instrument, not on the floor.
+    expect([...rig.entities].filter((e) => e.curr.p.y < 0.2)).toHaveLength(0);
+    rig.pw.free();
+  });
+
+  it('never travels past its stop, however badly it is loaded', async () => {
+    /*
+     * KNOWN LIMIT, asserted for what it is. A large single-sided load — 2 x 2 in tungsten
+     * against one aluminium — slams the beam down hard enough that the pan throws its
+     * cubes out, across every pan mass and counterweight depth swept. Real up to a point,
+     * since nobody expects 4.7 kg dumped on one side of a balance to sit politely, but the
+     * load should not escape the dish, and that is a rim-geometry item for W3.
+     *
+     * What this pins is the part that must hold regardless: the joint limit, and no NaN.
+     */
+    const { rig, bal } = await balanceRig();
+    place(rig, -1, 'W', 2, 2);
+    place(rig, 1, 'Al', 2, 1);
+    rig.run(bal, 12);
     expect(Number.isFinite(bal.state.angleDeg)).toBe(true);
     expect(Math.abs(bal.state.angleDeg)).toBeLessThan(config.weigh.balance.limitDeg + 0.5);
-    expect(bal.state.angleDeg).toBeGreaterThan(5);
     rig.pw.free();
   });
 

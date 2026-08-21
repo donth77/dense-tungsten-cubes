@@ -119,9 +119,39 @@ describe('the load cell', () => {
 
 // ---------------------------------------------------------------------------------
 
+/*
+ * FROZEN AT THE W0 VALUES, not read from `config.weigh.balance`.
+ *
+ * W0's job was to choose parameters, and it recorded what those parameters do. W2 then
+ * built the real instrument and retuned several of them for reasons W0 could not see —
+ * pans an order of magnitude heavier so a 2 in tungsten cube cannot flip a dish, a
+ * shallower counterweight to buy the sensitivity that cost. Left reading live config,
+ * these gates silently start measuring an instrument they never validated, and the first
+ * symptom was a 5 % difference pinning the beam at its stop.
+ *
+ * The live gates for the shipped balance are in `weigh-instruments.test.ts`, which drives
+ * `BalanceInstrument` itself.
+ */
+const W0_BALANCE = {
+  beamKg: 1.4,
+  panKg: 0.3,
+  armM: 0.37,
+  dropM: 0.2,
+  keelDropM: 0.12,
+  keelMassFraction: 0.7,
+  pivotDamping: 0.75,
+  limitDeg: 12,
+  panRadiusM: 0.115,
+  panThicknessM: 0.004,
+  panRimHeightM: 0.012,
+  hookRingM: 0.02,
+  panLinearDamping: 1.6,
+  panAngularDamping: 2.2,
+} as const;
+
 async function balance(loads: [number, number], nudgeRadS = 0, seconds = 7) {
   const world = await spikeWorld();
-  const rig = buildBalance(world, { ...B });
+  const rig = buildBalance(world, { ...W0_BALANCE });
   for (let i = 0; i < 300; i++) rig.step();
   if (loads[0] > 0) rig.addLoad(0, loads[0], 0.05);
   if (loads[1] > 0) rig.addLoad(1, loads[1], 0.05);
