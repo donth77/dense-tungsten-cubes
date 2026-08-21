@@ -11,14 +11,7 @@
  */
 
 export type IconId =
-  | 'recenter'
-  | 'engrave'
-  | 'engraveOff'
-  | 'sound'
-  | 'muted'
-  | 'help'
-  | 'close'
-  | 'trash';
+  'recenter' | 'engrave' | 'engraveOff' | 'sound' | 'muted' | 'help' | 'close' | 'trash';
 
 const PATHS: Record<IconId, string> = {
   // Recenter: a framing bracket around a target dot.

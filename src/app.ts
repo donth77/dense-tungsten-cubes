@@ -99,6 +99,10 @@ export class App implements Stepper {
       onDeleteSelected: () => this.deleteSelected(),
     });
 
+    // The tab follows the lab that actually mounted, not the one that was clicked: a
+    // switch can lose a race to a newer one, and a tab claiming a lab the player is not
+    // in is worse than a tab that lags by a frame.
+    this.bus.on('lab-changed', ({ lab }) => this.hud.setActiveTab(lab));
     this.bus.on('select', ({ id }) => this.#select(id));
     // Both of these return an unsubscribe, and both used to be dropped on the floor.
     this.#teardown.push(
@@ -267,7 +271,10 @@ export class App implements Stepper {
    * cube is already falling when you arrive, so the first thud costs zero clicks.
    */
   spawn(at?: Vec3): void {
-    const p = at ?? this.#freeTraySlot(this.spec.sideM);
+    // The active lab may prefer somewhere else — beside the instrument rather than in
+    // the Sandbox tray. It only gets to ANSWER; spawning, the cap and the Hand all stay
+    // here (15 §8.7).
+    const p = at ?? this.labs.preferredSpawnPoint() ?? this.#freeTraySlot(this.spec.sideM);
     const before = this.entities.size;
     this.entities.spawn({ ...this.spec }, p);
     if (before >= config.limits.maxCubes) {
@@ -324,6 +331,9 @@ export class App implements Stepper {
     this.hand.release();
     this.#select(null);
     this.entities.clear();
+    // Clearing the player's cubes does not touch a tare offset, a settled reading, or a
+    // beam left against its stop. The lab owns that state and has to be told (15 §8.1).
+    this.labs.reset();
     this.rig.reset(this.spec.sideM);
     this.spawn();
   }
@@ -334,29 +344,38 @@ export class App implements Stepper {
     // 1. input is event-driven and already latched by the browser; nothing to snapshot.
     // 2. Hand forces go on PRE-step, so the solver resolves them in the same step.
     this.hand.applyForces();
-    // 3. Lab hook (the weigh station samples its readout here at M2a).
-    this.labs.update(dt);
+    // 3. Lab PRE-solver hook: instrument support forces and pivot damping. A step late
+    //    here is a load cell that reads the previous frame's weight (15 §8.1).
+    this.labs.beforePhysics(dt);
     // 4. Step, draining gated impacts.
     this.#impacts.length = 0;
     this.physics.step(dt, this.#impacts);
     // 5. curr -> prev, then read the new state.
     this.entities.captureTransforms();
-    // 6. Fan out.
+    // 6. Lab POST-solver hook: capture instrument transforms, sample angle/force/stops.
+    //    BEFORE the impact fan-out, so a listener that asks an instrument what it reads
+    //    gets this step's answer rather than the last one's.
+    this.labs.afterPhysics(dt);
+    // 7. Fan out.
     for (const ev of this.#impacts) {
       this.lastImpact = ev;
       this.bus.emit('impact', ev);
     }
-    // 7. Sweep up anything flung off the slab. AFTER the fan-out, deliberately: an
+    // 8. Sweep up anything flung off the slab. AFTER the fan-out, deliberately: an
     //    impact event carries entity ids, and culling first could hand a listener an
     //    id whose voice the audio bus has already unregistered.
     this.entities.cullBelow(config.stage.killPlaneY);
-    // 8. Advance the selection marker's fade — last, so it never spends a step tracking
-    //    a cube that step 7 has already swept off the slab.
+    // 9. Advance the selection marker's fade — last, so it never spends a step tracking
+    //    a cube that step 8 has already swept off the slab.
     this.entities.updateSelectionFade(dt);
   }
 
   renderStep(alpha: number, dtFrameS: number): void {
     this.entities.interpolate(alpha);
+    // Instruments interpolate on the same alpha as the cubes. A balance beam drawn
+    // straight from the fixed-step pose judders beside the cubes sitting in its pans,
+    // and the two are on screen together (15 §8.3).
+    this.labs.render(alpha);
     this.rig.update(dtFrameS);
     this.render.render();
 

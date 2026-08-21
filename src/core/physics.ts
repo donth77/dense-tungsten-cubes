@@ -6,10 +6,17 @@ import { SURFACES } from '../data/surfaces.ts';
 import { E_REF_PAIR, MU_REF_PAIR, factor } from '../data/contact.ts';
 import type {
   BodyHandle,
+  ColliderPart,
+  CompoundBodySpec,
   CubeSpec,
   EntityId,
   ImpactEvent,
+  JointHandle,
+  PartShape,
+  PrismaticJointSpec,
   Quat,
+  RevoluteJointSpec,
+  RopeJointSpec,
   SurfaceId,
   Transform,
   Vec3,
@@ -73,7 +80,15 @@ const ORIGIN = { x: 0, y: 0, z: 0 };
 interface Rec {
   handle: BodyHandle;
   body: RAPIER.RigidBody;
-  collider: RAPIER.Collider;
+  /**
+   * EVERY collider on this body, not just the first.
+   *
+   * It was a single collider until compound instrument bodies arrived (15 §8.2): a
+   * balance beam is a bar plus a keel, a pan is a floor plus a rim. Anything that walks
+   * contacts, materials or teardown has to see all of them, and `#byCollider` maps each
+   * one back here.
+   */
+  colliders: RAPIER.Collider[];
   massKg: number;
   /** Set for statics: what the impact bus reports as the partner. */
   surface?: SurfaceId;
@@ -93,6 +108,57 @@ interface Rec {
   halfExtent: number;
   /** Outer side, metres. Dynamics only — the purity slider needs it to re-derive mass. */
   sideM?: number;
+  /**
+   * How a compound was described, kept so the debug overlay can draw what the SOLVER
+   * sees rather than what the artist supplied. On an instrument those differ by design:
+   * 15 §1 drives the physics from simplified procedural colliders, never from the GLB's
+   * render triangles, and an overlay that draws the mesh would hide exactly the
+   * mismatch it exists to reveal.
+   */
+  parts?: readonly ColliderPart[];
+}
+
+interface JointRec {
+  joint: RAPIER.ImpulseJoint;
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+}
+
+/** The smallest half-extent of a shape — a body's own CCD sweep threshold. */
+function minHalfExtent(shape: PartShape): number {
+  switch (shape.kind) {
+    case 'box':
+    case 'roundedBox':
+      return Math.min(shape.halfExtents.x, shape.halfExtents.y, shape.halfExtents.z);
+    case 'cylinder':
+      return Math.min(shape.halfHeightM, shape.radiusM);
+  }
+}
+
+/** Volume of a part's shape, for turning a requested mass into a collider density. */
+function partVolume(shape: PartShape): number {
+  switch (shape.kind) {
+    case 'box':
+      return 8 * shape.halfExtents.x * shape.halfExtents.y * shape.halfExtents.z;
+    case 'roundedBox': {
+      /*
+       * The INNER box, shrunk by the border radius on every axis.
+       *
+       * Two facts compose here and it is easy to get half of it right. Rapier's
+       * `roundCuboid` GROWS the box it is given by `borderRadius`, so `#createPart` asks
+       * for `half - r` to land on the advertised outer size. And Rapier derives a
+       * roundCuboid's mass from that inner box ALONE, giving the rounded border no mass
+       * at all (14 PHY-07). So the volume the density is divided into has to be the inner
+       * one: using the outer half-extents here made every rounded part come out light by
+       * ((h - r)/h)^3 — 15 % on a part with a 5 % radius, silently.
+       */
+      const h = shape.halfExtents;
+      const r = shape.borderRadiusM;
+      return 8 * Math.max(0, h.x - r) * Math.max(0, h.y - r) * Math.max(0, h.z - r);
+    }
+    case 'cylinder':
+      return Math.PI * shape.radiusM * shape.radiusM * 2 * shape.halfHeightM;
+  }
 }
 
 export class PhysicsWorld {
@@ -103,8 +169,10 @@ export class PhysicsWorld {
   #recs = new Map<BodyHandle, Rec>();
   #byCollider = new Map<number, BodyHandle>();
   #nextHandle = 1;
-  /** Bodies that had a user force applied this step, so we know what to zero after it. */
+  /** Bodies that had a user force OR torque applied this step, so we know what to zero. */
   #forced = new Set<BodyHandle>();
+  #joints = new Map<JointHandle, JointRec>();
+  #nextJoint = 1;
 
   private constructor() {}
 
@@ -187,7 +255,7 @@ export class PhysicsWorld {
       .setContactForceEventThreshold(0);
 
     const collider = this.#world.createCollider(colDesc, body);
-    return this.#register(body, collider, {
+    return this.#register(body, [collider], {
       halfExtent: s / 2,
       sideM: s,
       ccd: opts?.ccd ?? false,
@@ -215,28 +283,199 @@ export class PhysicsWorld {
         .setContactForceEventThreshold(0),
       body,
     );
-    return this.#register(body, collider, {
+    return this.#register(body, [collider], {
       surface,
       halfExtent: Math.min(halfExtents.x, halfExtents.y, halfExtents.z),
     });
   }
 
+  /**
+   * A body built from several posed colliders (15 §8.2) — an instrument, not a cube.
+   *
+   * Mass comes from per-part `massKg` turned into a density, never from
+   * `setAdditionalMassProperties`. That is deliberate: it means the compound's centre of
+   * mass is computed by Rapier from *where the parts are*, so a balance beam whose keel
+   * hangs below its pivot has a below-pivot COM as a consequence of its construction
+   * rather than as a number someone typed. 15 §6.2 turns on exactly that distinction —
+   * a declared COM would let the beam claim a restoring moment its visible shape does
+   * not have.
+   */
+  addCompound(spec: CompoundBodySpec): BodyHandle {
+    const desc =
+      spec.kind === 'fixed' ? RAPIER.RigidBodyDesc.fixed() : RAPIER.RigidBodyDesc.dynamic();
+    desc.setTranslation(spec.at.x, spec.at.y, spec.at.z);
+    if (spec.kind === 'dynamic') desc.setCcdEnabled(spec.ccd ?? false);
+    if (spec.additionalSolverIterations) {
+      desc.setAdditionalSolverIterations(spec.additionalSolverIterations);
+    }
+    const body = this.#world.createRigidBody(desc);
+
+    const colliders = spec.parts.map((part) => this.#createPart(body, part));
+    let smallestHalf = Infinity;
+    for (const part of spec.parts) smallestHalf = Math.min(smallestHalf, minHalfExtent(part.shape));
+
+    return this.#register(body, colliders, {
+      halfExtent: Number.isFinite(smallestHalf) ? smallestHalf : 0.05,
+      ccd: spec.ccd ?? false,
+      parts: spec.parts,
+      // Every part names a surface, and the impact bus reports one partner material, so
+      // the first part's is what it speaks for. Instruments are single-material in
+      // practice (a steel balance, an aluminium scale); if that stops being true this is
+      // the line that has to grow a per-collider lookup.
+      ...(spec.parts[0] ? { surface: spec.parts[0].material } : {}),
+    });
+  }
+
+  #createPart(body: RAPIER.RigidBody, part: ColliderPart): RAPIER.Collider {
+    const shape = part.shape;
+    let cd: RAPIER.ColliderDesc;
+    switch (shape.kind) {
+      case 'box':
+        cd = RAPIER.ColliderDesc.cuboid(
+          shape.halfExtents.x,
+          shape.halfExtents.y,
+          shape.halfExtents.z,
+        );
+        break;
+      case 'roundedBox':
+        cd = RAPIER.ColliderDesc.roundCuboid(
+          shape.halfExtents.x - shape.borderRadiusM,
+          shape.halfExtents.y - shape.borderRadiusM,
+          shape.halfExtents.z - shape.borderRadiusM,
+          shape.borderRadiusM,
+        );
+        break;
+      case 'cylinder':
+        cd = RAPIER.ColliderDesc.cylinder(shape.halfHeightM, shape.radiusM);
+        break;
+    }
+
+    const surf = SURFACES[part.material];
+    cd.setFriction(factor(surf.friction, MU_REF_PAIR))
+      .setFrictionCombineRule(PAIR_RULE)
+      .setRestitution(factor(surf.restitution, E_REF_PAIR))
+      .setRestitutionCombineRule(PAIR_RULE)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(0);
+
+    if (part.at) cd.setTranslation(part.at.x, part.at.y, part.at.z);
+    if (part.rotation) cd.setRotation(part.rotation);
+    if (part.massKg !== undefined) {
+      const v = partVolume(shape);
+      cd.setDensity(v > 0 ? part.massKg / v : 0);
+    }
+    return this.#world.createCollider(cd, body);
+  }
+
+  // ---- joints -----------------------------------------------------------------
+
+  /**
+   * A hinge. `limitsRad` is applied AFTER creation, and that is not a style choice:
+   * `JointData.limitsEnabled`/`.limits` are **silently ignored** for revolute joints in
+   * Rapier 0.19.3 (the raw binding takes no limit arguments, unlike the prismatic one),
+   * and TypeScript accepts the fields either way. Measured in the W0 spike: a beam with a
+   * 12 degree limit set through JointData spun 359.99 degrees under torque, where
+   * `setLimits()` afterwards held it at exactly 12.00.
+   */
+  addRevoluteJoint(spec: RevoluteJointSpec): JointHandle {
+    const a = this.#must(spec.bodyA);
+    const b = this.#must(spec.bodyB);
+    const jd = RAPIER.JointData.revolute(spec.anchorA, spec.anchorB, spec.axis);
+    const joint = this.#world.createImpulseJoint(jd, a.body, b.body, true);
+    if (spec.limitsRad) {
+      (joint as RAPIER.RevoluteImpulseJoint).setLimits(spec.limitsRad[0], spec.limitsRad[1]);
+    }
+    return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
+  }
+
+  /**
+   * A slider. Unlike revolute, prismatic DOES honour limits set on the JointData — but
+   * they go through `setLimits` here too, so one code path covers both and nobody has to
+   * remember which joint type is which.
+   *
+   * Limits are SOFT. Measured: 400 N on a 0.2 kg slider pushed a 10 mm stop to 44.9 mm.
+   * They bound travel; they are not a wall, and nothing may rely on one for containment.
+   */
+  addPrismaticJoint(spec: PrismaticJointSpec): JointHandle {
+    const a = this.#must(spec.bodyA);
+    const b = this.#must(spec.bodyB);
+    const jd = RAPIER.JointData.prismatic(spec.anchorA, spec.anchorB, spec.axis);
+    const joint = this.#world.createImpulseJoint(jd, a.body, b.body, true);
+    if (spec.limitsM) {
+      (joint as RAPIER.PrismaticImpulseJoint).setLimits(spec.limitsM[0], spec.limitsM[1]);
+    }
+    return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
+  }
+
+  /**
+   * A maximum-distance tether — it pulls, never pushes. Three per pan make a bridle.
+   *
+   * CREATION ORDER MATTERS. Rapier walks constraints in the order they were made with a
+   * finite iteration count, so whichever bridle is built last has the smallest residual.
+   * Building one pan's ropes and then the other's left the first 0.15 mm over-extended
+   * and the beam resting 1.0 degrees off zero under equal loads; interleaving the two
+   * sides took that to 0.07. A caller building a symmetric assembly must interleave.
+   */
+  addRopeJoint(spec: RopeJointSpec): JointHandle {
+    const a = this.#must(spec.bodyA);
+    const b = this.#must(spec.bodyB);
+    const jd = RAPIER.JointData.rope(spec.maxLengthM, spec.anchorA, spec.anchorB);
+    const joint = this.#world.createImpulseJoint(jd, a.body, b.body, true);
+    return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
+  }
+
+  removeJoint(h: JointHandle): void {
+    const rec = this.#joints.get(h);
+    if (!rec) return;
+    this.#joints.delete(h);
+    this.#world.removeImpulseJoint(rec.joint, true);
+  }
+
+  /**
+   * The collider parts a compound was built from, for debug drawing. Empty for a cube,
+   * which is one implicit part and has `sideM` instead.
+   */
+  partsOf(h: BodyHandle): readonly ColliderPart[] {
+    return this.#recs.get(h)?.parts ?? [];
+  }
+
+  /** Every live body. The debug overlay needs this to draw what is not an entity. */
+  allBodies(): BodyHandle[] {
+    return [...this.#recs.keys()];
+  }
+
+  /** Whether a handle still names a live joint — the safe check teardown needs. */
+  hasJoint(h: JointHandle): boolean {
+    return this.#joints.has(h);
+  }
+
+  get jointCount(): number {
+    return this.#joints.size;
+  }
+
+  #registerJoint(joint: RAPIER.ImpulseJoint, bodyA: BodyHandle, bodyB: BodyHandle): JointHandle {
+    const handle = this.#nextJoint++ as JointHandle;
+    this.#joints.set(handle, { joint, bodyA, bodyB });
+    return handle;
+  }
+
   #register(
     body: RAPIER.RigidBody,
-    collider: RAPIER.Collider,
+    colliders: RAPIER.Collider[],
     extra: {
       surface?: SurfaceId;
       entityId?: EntityId;
       halfExtent?: number;
       ccd?: boolean;
       sideM?: number;
+      parts?: readonly ColliderPart[];
     },
   ): BodyHandle {
     const handle = this.#nextHandle++ as BodyHandle;
     const rec: Rec = {
       handle,
       body,
-      collider,
+      colliders,
       massKg: body.mass(),
       prevLin: { x: 0, y: 0, z: 0 },
       prevAng: { x: 0, y: 0, z: 0 },
@@ -248,20 +487,33 @@ export class PhysicsWorld {
       ccd: extra.ccd ?? false,
       halfExtent: extra.halfExtent ?? 0.05,
       ...(extra.sideM !== undefined ? { sideM: extra.sideM } : {}),
+      ...(extra.parts !== undefined ? { parts: extra.parts } : {}),
       ...(extra.surface !== undefined ? { surface: extra.surface } : {}),
       ...(extra.entityId !== undefined ? { entityId: extra.entityId } : {}),
     };
     this.#recs.set(handle, rec);
-    this.#byCollider.set(collider.handle, handle);
+    for (const c of colliders) this.#byCollider.set(c.handle, handle);
     return handle;
   }
 
   remove(h: BodyHandle): void {
     const rec = this.#recs.get(h);
     if (!rec) return;
-    this.#byCollider.delete(rec.collider.handle);
+    // Joints before the body (15 §8.2). Rapier drops a body's joints for us, but our own
+    // JointHandle map would keep pointing at freed constraints — and a stale handle that
+    // still answers `hasJoint` is exactly the bug teardown tests are supposed to catch.
+    for (const [jh, jrec] of [...this.#joints]) {
+      if (jrec.bodyA === h || jrec.bodyB === h) this.removeJoint(jh);
+    }
+    for (const c of rec.colliders) this.#byCollider.delete(c.handle);
     this.#recs.delete(h);
+    this.#forced.delete(h);
     this.#world.removeRigidBody(rec.body); // removes its colliders too
+  }
+
+  /** Whether a handle still names a live body — the safe check teardown needs. */
+  hasBody(h: BodyHandle): boolean {
+    return this.#recs.has(h);
   }
 
   // ---- forces & mutation ------------------------------------------------------
@@ -305,7 +557,7 @@ export class PhysicsWorld {
      * too little afterwards. Exactly the failure mode this method's own comment warns of.
      */
     const mp = cubeMassProperties(rec.sideM, kgPerM3);
-    rec.collider.setMassProperties(
+    rec.colliders[0]!.setMassProperties(
       mp.mass,
       ORIGIN,
       { x: mp.inertia, y: mp.inertia, z: mp.inertia },
@@ -324,6 +576,54 @@ export class PhysicsWorld {
      */
     rec.body.recomputeMassPropertiesFromColliders();
     rec.massKg = rec.body.mass();
+  }
+
+  /**
+   * A pure torque, for exactly one step.
+   *
+   * Registered in the SAME `#forced` set as `applyForce`, because Rapier's torques are
+   * as persistent as its forces: `addTorque` accumulates until `resetTorques`. A balance
+   * whose pivot damping quietly compounded step after step would read as an instrument
+   * that fights back harder the longer you watch it (15 §8.2 calls this out by name).
+   */
+  applyTorque(h: BodyHandle, torqueNm: Vec3): void {
+    const rec = this.#recs.get(h);
+    if (!rec) return;
+    rec.body.addTorque(torqueNm, true);
+    this.#forced.add(h);
+  }
+
+  /** World-space centre of mass — for a compound, this is where its construction put it. */
+  centerOfMassOf(h: BodyHandle): Vec3 {
+    const c = this.#must(h).body.worldCom();
+    return { x: c.x, y: c.y, z: c.z };
+  }
+
+  /**
+   * Principal moments of inertia, body frame. An instrument needs this to size its own
+   * damping: an explicit `-c*w` torque integrated by symplectic Euler amplifies once
+   * `c*dt/I > 2`, so the only safe damper is one that knows the inertia it is fighting.
+   */
+  principalInertiaOf(h: BodyHandle): Vec3 {
+    const i = this.#must(h).body.principalInertia();
+    return { x: i.x, y: i.y, z: i.z };
+  }
+
+  /** Rapier has put this body to sleep: it is at rest and costing nothing. */
+  isSleeping(h: BodyHandle): boolean {
+    return this.#recs.get(h)?.body.isSleeping() ?? false;
+  }
+
+  /**
+   * Linear damping — Rapier's own model of air friction.
+   *
+   * For INSTRUMENT bodies only. 14 PHY-05 deleted the equivalent on small cubes because
+   * it corrupted the one result this app must not get wrong: a damped 0.25" cube fell at
+   * -9.568 m/s where an undamped one fell at -9.810. A hanging pan is not measuring free
+   * fall, and a pan that swings forever is not an instrument (15 §6.1).
+   */
+  setLinearDamping(h: BodyHandle, d: number): void {
+    this.#recs.get(h)?.body.setLinearDamping(d);
   }
 
   setAngularDamping(h: BodyHandle, d: number): void {
@@ -520,11 +820,15 @@ export class PhysicsWorld {
     const rec = this.#recs.get(h);
     if (!rec) return 0;
     let impulse = 0;
-    this.#world.contactPairsWith(rec.collider, (other) => {
-      this.#world.contactPair(rec.collider, other, (manifold) => {
-        for (let i = 0; i < manifold.numContacts(); i++) impulse += manifold.contactImpulse(i);
+    // Every collider on the body: a compound platter or pan carries load on more than
+    // one part, and summing only the first would under-read whatever the rim caught.
+    for (const c of rec.colliders) {
+      this.#world.contactPairsWith(c, (other) => {
+        this.#world.contactPair(c, other, (manifold) => {
+          for (let i = 0; i < manifold.numContacts(); i++) impulse += manifold.contactImpulse(i);
+        });
       });
-    });
+    }
     return impulse / this.#world.timestep;
   }
 
@@ -700,7 +1004,11 @@ export class PhysicsWorld {
       // The contact point comes from a manifold query — TempContactForceEvent carries
       // only the collider pair, force magnitudes and a direction, never a position
       // (verified against 0.19.3's .d.ts; audit 2026-08-09).
-      const contact = this.#deepestContact(a.collider, b.collider);
+      // The colliders from the EVENT, not the bodies' first ones. On a compound body
+      // those differ, and querying the wrong pair returns a manifold that never existed.
+      const c1 = this.#world.getCollider(ev.collider1());
+      const c2 = this.#world.getCollider(ev.collider2());
+      const contact = c1 && c2 ? this.#deepestContact(c1, c2) : null;
       if (!contact) return;
 
       // Orient the normal from A toward B ourselves rather than trusting the manifold's
@@ -845,6 +1153,10 @@ export class PhysicsWorld {
     this.#world.free();
     this.#recs.clear();
     this.#byCollider.clear();
+    // The world owns the joints and has just been freed, so these are dangling wrappers.
+    // Left behind, `hasJoint` would keep answering true for a constraint in a dead world.
+    this.#joints.clear();
+    this.#forced.clear();
   }
 }
 

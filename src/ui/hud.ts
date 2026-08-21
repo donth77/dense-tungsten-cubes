@@ -48,6 +48,7 @@ export class Hud {
   #forkliftUnlocked = false;
   /** Where labs mount their own panel (08 §9). */
   readonly labPanel: HTMLElement;
+  #tabs!: Record<'sandbox' | 'weigh', HTMLElement>;
 
   constructor(
     private readonly root: HTMLElement,
@@ -112,17 +113,25 @@ export class Hud {
     });
     this.#bindForkliftUnlock();
 
-    const tabs = el(
-      'div.tabs',
-      { role: 'tablist' },
+    /*
+     * Real tab semantics (15 §8.4): `aria-selected` actually tracks the active lab rather
+     * than being hardcoded true, because a tablist where every tab claims to be selected
+     * tells a screen-reader user nothing. Roving arrow-key focus lands with the rest of
+     * the Weigh panel work.
+     */
+    const mkTab = (label: string, lab: 'sandbox' | 'weigh'): HTMLElement =>
       el('button.tab', {
         type: 'button',
         role: 'tab',
-        text: 'Sandbox',
-        'aria-selected': 'true',
-        onClick: () => this.cb.onLabChange('sandbox'),
-      }),
-    );
+        text: label,
+        'aria-selected': String(lab === 'sandbox'),
+        onClick: () => {
+          this.setActiveTab(lab);
+          this.cb.onLabChange(lab);
+        },
+      });
+    this.#tabs = { sandbox: mkTab('Sandbox', 'sandbox'), weigh: mkTab('Weigh', 'weigh') };
+    const tabs = el('div.tabs', { role: 'tablist' }, this.#tabs.sandbox, this.#tabs.weigh);
 
     this.#toast = el('div.toast', { role: 'status', 'aria-live': 'polite' });
     this.help = new HelpPanel(() => this.#helpBtn.focus());
@@ -175,6 +184,13 @@ export class Hud {
     // driven, so it is measured rather than assumed.
     this.layout.subscribe(() => this.#syncSheetMetrics());
     requestAnimationFrame(() => this.#syncSheetMetrics());
+  }
+
+  /** Moves the selected state. Called on click, and by app.ts when a lab switch lands. */
+  setActiveTab(lab: 'sandbox' | 'weigh'): void {
+    for (const [id, node] of Object.entries(this.#tabs)) {
+      node.setAttribute('aria-selected', String(id === lab));
+    }
   }
 
   cycleHandMode(): void {

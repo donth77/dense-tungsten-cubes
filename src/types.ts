@@ -37,6 +37,81 @@ declare const BodyHandleBrand: unique symbol;
  */
 export type BodyHandle = number & { readonly [BodyHandleBrand]: never };
 
+declare const JointHandleBrand: unique symbol;
+/** The same seam, for constraints. Minted and dereferenced only by `core/physics.ts`. */
+export type JointHandle = number & { readonly [JointHandleBrand]: never };
+
+/**
+ * The shapes a compound instrument part may take (15 §8.2).
+ *
+ * Deliberately a small closed set rather than a pass-through of Rapier's collider
+ * vocabulary: the firewall is only worth having if the descriptor on this side of it is
+ * engine-independent. A balance beam, a pan, a scale housing and a platter are all
+ * expressible with these three.
+ */
+export type PartShape =
+  | { kind: 'box'; halfExtents: Vec3 }
+  | { kind: 'roundedBox'; halfExtents: Vec3; borderRadiusM: number }
+  | { kind: 'cylinder'; halfHeightM: number; radiusM: number };
+
+/** One collider inside a compound body, posed in the body's local frame. */
+export interface ColliderPart {
+  shape: PartShape;
+  /** Local offset from the body origin. Omitted means the origin. */
+  at?: Vec3;
+  /** Local rotation. Omitted means identity. */
+  rotation?: Quat;
+  material: SurfaceId;
+  /**
+   * What this part weighs. Density is derived from the shape's volume, so the compound's
+   * centre of mass falls out of *where the parts are* — which is what makes a balance's
+   * below-pivot COM a construction rather than a declaration (15 §6.2).
+   *
+   * Omit on a fixed body, where mass is meaningless.
+   */
+  massKg?: number;
+}
+
+export interface CompoundBodySpec {
+  kind: 'fixed' | 'dynamic';
+  at: Vec3;
+  parts: readonly ColliderPart[];
+  ccd?: boolean;
+  /**
+   * Rapier's per-body solver iterations. Measured HARMFUL on the balance's shared
+   * constraint network (W0: +4 iterations sent equal-load rest from 0.07 to 82 degrees),
+   * so this exists to be left alone unless a sweep says otherwise (15 §7.3).
+   */
+  additionalSolverIterations?: number;
+}
+
+export interface RevoluteJointSpec {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  anchorA: Vec3;
+  anchorB: Vec3;
+  axis: Vec3;
+  limitsRad?: readonly [number, number];
+}
+
+export interface PrismaticJointSpec {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  anchorA: Vec3;
+  anchorB: Vec3;
+  axis: Vec3;
+  limitsM?: readonly [number, number];
+}
+
+export interface RopeJointSpec {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  anchorA: Vec3;
+  anchorB: Vec3;
+  /** A rope resists stretching only; it never pushes. */
+  maxLengthM: number;
+}
+
 export interface CubeSpec {
   metal: MetalId;
   /** Physics unit. The UI shows inches first (08 §2.3) — that conversion lives in data/format.ts. */

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { App } from './app.ts';
 import { config } from './config.ts';
 import { cubeMassKg } from './data/metals.ts';
-import type { ImpactEvent, MetalId } from './types.ts';
+import type { ImpactEvent, MetalId, PartShape } from './types.ts';
 
 /**
  * Debug facade and tooling. Reached only via `?debug` or a dev build, and dynamically
@@ -108,9 +108,20 @@ class ColliderOverlay {
   readonly #mat = new THREE.LineBasicMaterial({ color: 0xff6b1f, depthTest: false });
   /** One wireframe per live entity, rebuilt only when the entity set changes. */
   readonly #boxes = new Map<number, THREE.LineSegments>();
+  /**
+   * The same for a lab's compound instrument bodies, which are NOT entities — they are
+   * not spawnable, selectable or culled, so nothing in the entity events describes them.
+   *
+   * Worth drawing for the reason the overlay exists at all: 15 §1 drives instrument
+   * physics from simplified procedural colliders and never from the asset's render
+   * triangles, so the solver's balance beam and the artist's balance beam are different
+   * shapes on purpose. This is the only way to see the one the simulation believes in.
+   */
+  readonly #propGroups = new Map<number, THREE.Group>();
   #enabled = false;
   #offSpawn: (() => void) | null = null;
   #offDespawn: (() => void) | null = null;
+  #offLab: (() => void) | null = null;
 
   constructor(private readonly app: App) {
     this.#group.renderOrder = 999;
@@ -123,15 +134,19 @@ class ColliderOverlay {
     this.#group.visible = on;
     if (on) {
       this.#sync();
+      this.#syncProps();
       // Rebuild on membership change only. The previous version re-created an
       // EdgesGeometry per cube on EVERY frame via a self-scheduling rAF, which allocated
       // more per second than the simulation it was there to inspect.
       this.#offSpawn = this.app.bus.on('spawn', () => this.#sync());
       this.#offDespawn = this.app.bus.on('despawn', () => this.#sync());
+      // Instruments appear and vanish with a lab, not with a spawn.
+      this.#offLab = this.app.bus.on('lab-changed', () => this.#syncProps());
     } else {
       this.#offSpawn?.();
       this.#offDespawn?.();
-      this.#offSpawn = this.#offDespawn = null;
+      this.#offLab?.();
+      this.#offSpawn = this.#offDespawn = this.#offLab = null;
       this.#clear();
     }
   }
@@ -142,6 +157,53 @@ class ColliderOverlay {
       box.geometry.dispose();
     }
     this.#boxes.clear();
+    this.#clearProps();
+  }
+
+  #clearProps(): void {
+    for (const g of this.#propGroups.values()) {
+      this.#group.remove(g);
+      g.traverse((o) => {
+        if (o instanceof THREE.LineSegments) o.geometry.dispose();
+      });
+    }
+    this.#propGroups.clear();
+  }
+
+  /**
+   * Rebuilds the compound-body wireframes wholesale. Cheap, and it runs on a lab switch
+   * rather than per frame: a lab's instrument set is fixed between builds.
+   */
+  #syncProps(): void {
+    if (!this.#enabled) return;
+    this.#clearProps();
+    for (const handle of this.app.physics.allBodies()) {
+      const parts = this.app.physics.partsOf(handle);
+      if (parts.length === 0) continue; // a cube: drawn from entity data above
+
+      const group = new THREE.Group();
+      for (const part of parts) {
+        const src = boxGeometryFor(part.shape);
+        if (!src) continue;
+        const seg = new THREE.LineSegments(new THREE.EdgesGeometry(src), this.#mat);
+        src.dispose();
+        if (part.at) seg.position.set(part.at.x, part.at.y, part.at.z);
+        if (part.rotation) {
+          seg.quaternion.set(part.rotation.x, part.rotation.y, part.rotation.z, part.rotation.w);
+        }
+        group.add(seg);
+      }
+      // Track the body each frame without rebuilding anything, exactly as the cube
+      // wireframes do — and read through the facade, never a Rapier handle.
+      group.onBeforeRender = (): void => {
+        if (!this.app.physics.hasBody(handle)) return;
+        const t = this.app.physics.transformOf(handle);
+        group.position.set(t.p.x, t.p.y, t.p.z);
+        group.quaternion.set(t.q.x, t.q.y, t.q.z, t.q.w);
+      };
+      this.#propGroups.set(handle, group);
+      this.#group.add(group);
+    }
   }
 
   #sync(): void {
@@ -171,6 +233,19 @@ class ColliderOverlay {
       box.geometry.dispose();
       this.#boxes.delete(id);
     }
+  }
+}
+
+/** A drawable stand-in for a collider shape. Cylinders are drawn as their bounding box. */
+function boxGeometryFor(shape: PartShape): THREE.BoxGeometry | null {
+  switch (shape.kind) {
+    case 'box':
+    case 'roundedBox': {
+      const h = shape.halfExtents;
+      return new THREE.BoxGeometry(h.x * 2, h.y * 2, h.z * 2);
+    }
+    case 'cylinder':
+      return new THREE.BoxGeometry(shape.radiusM * 2, shape.halfHeightM * 2, shape.radiusM * 2);
   }
 }
 

@@ -300,6 +300,13 @@ export const config = {
    * came to be wrong.
    */
   weigh: {
+    /**
+     * Where cubes are staged, in front of the instrument bay (15 §5.1). Deterministic and
+     * non-overlapping: random scatter beside a moving balance is how a cube ends up
+     * bouncing off a pan nobody was looking at.
+     */
+    stagingZ: 0.48,
+
     scale: {
       /** Gross capacity above the tared platter (15 §1). */
       ratedKg: 5,
@@ -361,12 +368,60 @@ export const config = {
       stopFactor: 2.0,
       /** Proof force as a multiple of rated gross weight; reaching it is OVERLOAD. */
       proofFactor: 1.5,
+
+      /*
+       * The signal chain (15 §7.5). Two cascaded one-pole sections; the cutoff is in Hz
+       * rather than a bare coefficient so it means the same thing at any step rate, and
+       * `dt` being fixed is what makes that true.
+       */
+      filterCutoffHz: 4,
+      /** A reading becomes stable only after this long with EVERY condition holding. */
+      stabilityWindowS: 0.5,
+      /** Platter speed below which it counts as settled. */
+      platterSpeedMps: 0.002,
+      /** Peak-to-peak platter travel across the window, below which it counts as settled. */
+      travelSpanM: 0.0002,
+      /**
+       * Corner speed of any cube in the measurement volume, below which the load counts as
+       * settled. Guards the case the force cannot see: a cube sliding sideways across the
+       * platter holds the vertical force perfectly constant while plainly still moving.
+       */
+      loadMotionMps: 0.02,
+      /** The DOM does not need 60 updates a second; transitions publish immediately. */
+      publishHz: 10,
+
+      /*
+       * Stage layout (15 §5.1).
+       *
+       * The housing has to sit clear of the platter's FULLY COMPRESSED underside, not
+       * merely of its resting one. At 0.02 half-height it topped out at y = 0.04 and the
+       * platter's bottom reached 0.039 under a 1 kg load — so the housing quietly carried
+       * the load and a kilo cube weighed 0.15 kg.
+       */
+      housingHalfM: { x: 0.09, y: 0.011, z: 0.13 },
+      platterHalfM: { x: 0.065, y: 0.0075, z: 0.065 },
+      /** Top of the housing, and therefore the platter's unloaded height. */
+      platterRestHeightM: 0.05,
     },
 
     balance: {
       beamKg: 1.4,
       panKg: 0.3,
-      /** Load arm: pivot to pan centre (15 §6.1 seeds 0.36–0.38 m). */
+      /*
+       * THE PHYSICS IS THE SOURCE OF TRUTH HERE, and the asset is fitted to it.
+       *
+       * 15 §6.1 says the final proportions should come from the uniformly rescaled asset,
+       * and that was tried: the asset's own ratios give a 0.254 m arm and a 0.273 m drop,
+       * and adopting them broke the loaded balance — a 1 kg cube on one pan sent the beam
+       * oscillating between -9 and +6 degrees instead of pinning at its stop, and threw the
+       * cube on the floor. That needs its own calibration pass, and these values already
+       * have one behind them (the W0 sweep).
+       *
+       * So `tools/prepare-balance.py` scales each part to ITS target instead — the beam to
+       * `armM`, the pans to `panRadiusM`, the stand to `pivotHeightM`. Slightly non-uniform
+       * between parts, invisible at a glance, and it keeps the drawn instrument and the
+       * simulated one the same size.
+       */
       armM: 0.37,
       /** Rope length, hook ring to pan rim. */
       dropM: 0.2,
@@ -396,6 +451,78 @@ export const config = {
       pivotDamping: 0.75,
       /** Beam travel. The stop holds to within ~0.19 deg of solver tolerance, as 15 §13.2 allows. */
       limitDeg: 12,
+      /** Per pan (15 §1). Physical fit and load capacity are deliberately separate facts. */
+      capacityKgPerPan: 10,
+
+      /*
+       * Stage layout (15 §5.1). The pivot is lower than the W0 rig's arbitrary 0.55 m,
+       * which changes nothing numerically — gravity is uniform, so every W0 measurement
+       * transfers unchanged — and puts the pans at a height a camera framing the floor
+       * can actually see.
+       */
+      pivotHeightM: 0.42,
+      panRadiusM: 0.115,
+      panThicknessM: 0.004,
+      /**
+       * Shallow, per 15 §6.3 — but not so shallow that a 2 in cube walks out of the dish
+       * as the pan tilts. A cube's centre of mass sits well above any rim this low; the
+       * rim's job is to catch a slide, not to contain a topple.
+       */
+      panRimHeightM: 0.012,
+      /** The hook-ring triangle the three ropes of each bridle hang from. */
+      hookRingM: 0.02,
+      /** Column and base, measured off the prepared asset so collider and mesh agree. */
+      columnRadiusM: 0.022,
+      baseRadiusM: 0.0988,
+      baseThicknessM: 0.008,
+      /**
+       * How far out in Z each half of the counterweight sits. It has to CLEAR the column
+       * — a keel on the centreline lives inside the stand, and the solver's answer to two
+       * overlapping bodies was to slam an empty balance to its stop.
+       */
+      keelOffsetZM: 0.038,
+
+      /*
+       * Bridle losses, on the PANS ONLY (15 §6.1). Never on player cubes — 14 PHY-05
+       * deleted exactly this lever there for corrupting free fall.
+       *
+       * Without it the pans are frictionless pendulums on 0.2 m ropes and they swing
+       * forever: measured, an empty balance whose BEAM had settled to 0.02 degrees still
+       * had a pan turning at 0.37 rad/s ten seconds in, so the instrument could never
+       * report BALANCED. A 0.9 s pendulum period wants a rate that kills the swing in
+       * about two periods.
+       */
+      panLinearDamping: 1.6,
+      panAngularDamping: 2.2,
+
+      /*
+       * Reading the beam (15 §9.3, §13.2). BALANCED is a claim about equality, so it gets
+       * the same treatment as the scale's STABLE: a tolerance AND a dwell, with every
+       * disturbance resetting the clock.
+       */
+      balancedToleranceDeg: 0.25,
+      settleWindowS: 0.5,
+      /**
+       * Peak-to-peak beam travel across the settle window, below which it counts as
+       * stopped. Judged on POSITION, not angular velocity — see BalanceSignal for the
+       * measurement that made that necessary.
+       */
+      settledAngleSpanDeg: 0.2,
+      /**
+       * Pan swing below which the bridle counts as hanging still.
+       *
+       * Loose on purpose. The pans hang on six ropes and keep a small residual sway long
+       * after the beam has stopped — measured, a lightly loaded beam sat at 4.4 degrees
+       * with its angle steady to within 0.05 while a pan still turned at ~0.2 rad/s, and a
+       * tighter gate reported MOVING indefinitely. The BEAM's angle is what the reading
+       * depends on, and that has its own, strict, span test.
+       */
+      settledPanSpeedRadS: 0.35,
+      /**
+       * How close to the 12 deg stop counts as ON it. The solver overshoots the limit by
+       * ~0.19 deg, so a beam pinned by a real imbalance must not be read as merely tilted.
+       */
+      atStopMarginDeg: 0.4,
     },
   },
 };

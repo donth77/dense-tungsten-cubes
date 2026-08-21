@@ -3,6 +3,7 @@ import type { EntityStore } from '../core/entities.ts';
 import type { EventBus } from '../core/events.ts';
 import type { PhysicsWorld } from '../core/physics.ts';
 import type { RenderWorld } from '../core/render.ts';
+import type { Vec3 } from '../types.ts';
 
 /**
  * The lab contract (05, 08 §9).
@@ -44,13 +45,41 @@ export interface LabUi {
 
 export type LabId = 'sandbox' | 'weigh';
 
+/**
+ * The lab lifecycle (15 §8.1).
+ *
+ * One `update(dt)` was ambiguous about the only thing that matters here: which side of
+ * the solver a hook runs on. Support forces and pivot damping MUST go in before the step
+ * or they are a step late; readings, angles and stop states MUST be sampled after it or
+ * they describe the previous one. The phase names are part of the physics contract and
+ * must not be collapsed back into a single update.
+ */
 export interface Lab {
   id: LabId;
   title: string;
   build(ctx: LabContext): void;
-  /** Per-fixed-step hook (the weigh station samples its readout here). */
-  update?(dt: number): void;
+  /** Pre-solver: apply the instrument's own forces and torques. */
+  beforePhysics?(dt: number): void;
+  /** Post-solver: capture instrument transforms, sample readings, advance state. */
+  afterPhysics?(dt: number): void;
+  /** Once per rendered frame, at the interpolation alpha. Never writes to physics. */
+  render?(alpha: number): void;
+  /**
+   * The global Reset action. A lab that owns an instrument has state Reset must clear —
+   * a tare offset, a settled reading, a beam left against its stop — and clearing the
+   * player's cubes does not touch any of it.
+   */
+  reset?(): void;
   teardown(): void;
+  /**
+   * Where this lab would rather a new cube appeared, in world space.
+   *
+   * A seam, not a transfer of ownership (15 §8.7): `app.ts` still owns spawning, the cap,
+   * and the Hand. The Weigh Station answers with a spot beside the active instrument,
+   * because a cube that lands in the Sandbox tray is a cube the player has to carry
+   * across the stage before the lab can do anything with it.
+   */
+  preferredSpawnPoint?(): Vec3 | null;
 }
 
 /**
@@ -61,7 +90,16 @@ export class LabManager {
   #active: Lab | null = null;
   #activeId: LabId | null = null;
 
-  constructor(private readonly ctx: LabContext) {}
+  /**
+   * @param loadLabModule injectable only so the transition-token guarantee can be TESTED.
+   *   A race between two dynamic imports is not reproducible against the real loader, and
+   *   "an older import must never build over the newer lab" is a correctness property
+   *   worth a test rather than a comment (15 §8.4).
+   */
+  constructor(
+    private readonly ctx: LabContext,
+    private readonly loadLabModule: (id: LabId) => Promise<Lab> = loadLab,
+  ) {}
 
   get activeId(): LabId | null {
     return this.#activeId;
@@ -83,7 +121,7 @@ export class LabManager {
     this.#activeId = null;
     this.ctx.ui.setControls('', []);
 
-    const lab = await loadLab(id);
+    const lab = await this.loadLabModule(id);
     // Someone asked for a different lab while this one was loading. Drop it on the floor:
     // it was never built, so there is nothing to tear down.
     if (token !== this.#transition) return;
@@ -94,8 +132,29 @@ export class LabManager {
     this.ctx.bus.emit('lab-changed', { lab: id });
   }
 
-  update(dt: number): void {
-    this.#active?.update?.(dt);
+  /*
+   * Every phase goes through `#active`, which `switchTo` clears BEFORE awaiting the
+   * dynamic import and only sets after the transition token check. So a lab that lost a
+   * race is never dispatched to: it was never assigned, and a torn-down lab is null.
+   */
+  beforePhysics(dt: number): void {
+    this.#active?.beforePhysics?.(dt);
+  }
+
+  afterPhysics(dt: number): void {
+    this.#active?.afterPhysics?.(dt);
+  }
+
+  render(alpha: number): void {
+    this.#active?.render?.(alpha);
+  }
+
+  reset(): void {
+    this.#active?.reset?.();
+  }
+
+  preferredSpawnPoint(): Vec3 | null {
+    return this.#active?.preferredSpawnPoint?.() ?? null;
   }
 
   teardown(): void {
@@ -111,9 +170,11 @@ async function loadLab(id: LabId): Promise<Lab> {
       const mod = await import('./sandbox/index.ts');
       return new mod.SandboxLab();
     }
-    case 'weigh':
+    case 'weigh': {
+      const mod = await import('./weigh/index.ts');
+      return new mod.WeighLab();
+    }
     default:
-      // M2a. Named here so the switch is exhaustive and the failure is legible.
-      throw new Error(`lab "${id}" is not built yet`);
+      throw new Error(`lab "${String(id)}" is not built`);
   }
 }
