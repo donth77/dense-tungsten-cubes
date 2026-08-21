@@ -289,6 +289,115 @@ export const config = {
     cameraOffsetPortraitFrac: 1 / 6,
     cameraOffsetRailPx: 140,
   },
+
+  /**
+   * The Weigh Station (15). M2a.
+   *
+   * Every number below was CHOSEN BY MEASUREMENT in the Stage W0 spike
+   * (`tests/physics/weigh.test.ts`, rig in `tests/physics/weigh-rig.ts`), not estimated.
+   * The sweeps that produced them are quoted at each field, because the alternative —
+   * a plausible-looking constant with no provenance — is how 15 §7.3's own seed values
+   * came to be wrong.
+   */
+  weigh: {
+    scale: {
+      /** Gross capacity above the tared platter (15 §1). */
+      ratedKg: 5,
+      /** Displayed division, and the minimum indication below which no hundredths show. */
+      divisionKg: 0.01,
+      minIndicationKg: 0.05,
+
+      /*
+       * PLATTER MASS IS A NUMERICAL PARAMETER, NOT A COSMETIC ONE.
+       *
+       * 15 §7.3 seeds 0.6 kg. Measured, **0.6 kg cannot work at 60 Hz at any travel or
+       * damping in the swept range** — the empty platter never settles. Two independent
+       * limits bind, both evaluated on the EMPTY platter because that is the lightest
+       * mass the cell ever sees:
+       *
+       *     spring:            sqrt(k/m)·dt < 2
+       *     explicit damper:   c·dt/m       < 2
+       *
+       * and k is fixed by rated load over rated travel, so a light platter forces a stiff
+       * spring onto a small mass. At 0.6 kg / 6 mm, sqrt(k/m)·dt = 2.06 — over the limit.
+       *
+       * Minimum platter mass that passes 0/1/5 kg, measured (clamped damper):
+       *
+       *      travel   6 mm ->  2.5 kg        travel  12 mm -> 1.5 kg
+       *      travel   8 mm ->  2.0 kg        travel  16 mm -> 1.5 kg
+       *      travel  10 mm ->  1.5 kg
+       *
+       * 2.5 kg at 8 mm is the pick: settles in 1.20 s against a 2 s gate, raw error
+       * 3.4e-7 kg against a 1e-3 kg gate, steady-state span 0.0000 N, and sqrt(k/m)·dt =
+       * 1.01, half the stability limit. A heavy platter costs nothing visible because
+       * 15 §7.4 excludes the empty-platter indication from capacity — it is tared away.
+       *
+       * Additional solver iterations DO NOT HELP: +0/+4/+16/+32 all fail identically on
+       * the 0.6 kg seed, because the instability is in our own explicit force integration,
+       * outside the solver entirely.
+       */
+      platterKg: 2.5,
+      /** Solver-resolvable travel at rated load. Larger than a real strain gauge (15 §7.2). */
+      travelM: 0.008,
+      /**
+       * Damping ratio around platter + 1 kg. Currently INERT: `clampDamping` binds every
+       * step of a transient, so 0.7 and 2.0 measure identically. Kept as the physical
+       * parameter it is, so whoever revisits the clamp has the knob back.
+       */
+      zeta: 1.0,
+      /**
+       * Cap the damping impulse at what would just stop the platter this step.
+       * Unconditionally dissipative, which removes the `c·dt/m < 2` limit above: 88 of the
+       * swept configurations pass with it against 26 without.
+       */
+      clampDamping: true,
+      /**
+       * Lower stop as a multiple of rated travel. A legitimate 5 kg placement peaks at
+       * 12.43 mm of compression — 1.55x the static 8 mm — so the first choice of 1.6x
+       * (12.8 mm) left 0.37 mm of margin and would have flashed OVERLOAD on a valid
+       * weighing. 2.0x keeps the stop clear of every in-range placement while still
+       * engaging before proof force on a real overload.
+       */
+      stopFactor: 2.0,
+      /** Proof force as a multiple of rated gross weight; reaching it is OVERLOAD. */
+      proofFactor: 1.5,
+    },
+
+    balance: {
+      beamKg: 1.4,
+      panKg: 0.3,
+      /** Load arm: pivot to pan centre (15 §6.1 seeds 0.36–0.38 m). */
+      armM: 0.37,
+      /** Rope length, hook ring to pan rim. */
+      dropM: 0.2,
+      /*
+       * The beam/yoke COM sits `keelDropM · keelMassFraction` = 84 mm below the pivot.
+       * Gravity restores the beam; nothing else does (15 §6.2 — no motor, no angle spring).
+       *
+       * 15 §6.1 seeds a much shallower keel. Deeper is better for two measured reasons:
+       *
+       *   1. Residual solver bias appears as a fixed torque, so the rest angle it produces
+       *      shrinks as the restoring moment grows. Equal-load rest angle by COM depth:
+       *      30 mm -> 0.26 deg (outside the ±0.25 deg gate), 45 mm -> 0.18, 63 mm -> 0.11,
+       *      84 mm -> 0.067, 112 mm -> 0.062.
+       *   2. It is what makes the signature demonstration READABLE. With a 5 % mass
+       *      difference — 15 §1's seven aluminium cubes against one tungsten — a shallow
+       *      keel slams the beam onto the 12 deg stop (-12.01 deg at 30-45 mm) and every
+       *      difference looks identical. At 84 mm the same 5 % rests at -8.2 deg: plainly
+       *      tipped, plainly not pinned, and visibly less than the -12.2 deg a 2x load gives.
+       */
+      keelDropM: 0.12,
+      keelMassFraction: 0.7,
+      /**
+       * Viscous pivot torque, N·m·s/rad, clamped like the cell damper. Measured after a
+       * 1.2 rad/s nudge: 0.3 swings for 4.8 s (past 15 §6.1's 2–3 s target), 1.5 kills the
+       * nudge inside one step and reads dead, 0.75 settles in 1.47 s with a visible swing.
+       */
+      pivotDamping: 0.75,
+      /** Beam travel. The stop holds to within ~0.19 deg of solver tolerance, as 15 §13.2 allows. */
+      limitDeg: 12,
+    },
+  },
 };
 // Deliberately NOT `as const`: the calibration page writes through this object live
 // (08 §5.4), and readonly literal types would make that a type error.

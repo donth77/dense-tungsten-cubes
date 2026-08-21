@@ -196,8 +196,9 @@ export class PhysicsWorld {
   }
 
   /**
-   * Returns a handle — the scale platform is a static box and `contactForceOnKg()`
-   * needs to be able to name it (08 §6, audit 2026-08-09).
+   * The stage floor and a lab's mats (08 §6). Returns a handle so a caller can name the
+   * box again — to read contact force on it, to swap its surface, or to remove it at
+   * teardown.
    */
   addStaticBox(halfExtents: Vec3, at: Vec3, surface: SurfaceId): BodyHandle {
     const spec = SURFACES[surface];
@@ -491,17 +492,31 @@ export class PhysicsWorld {
   }
 
   /**
-   * The digital scale's readout (08 §9.2). This is the **sustained-force channel** —
-   * polled, continuous, and silent by nature; it is not, and must not be, the impact
-   * channel (§8.1).
+   * Total contact impulse on a body over the last step, as a force in **newtons**.
+   *
+   * The **sustained-force channel**: polled, continuous, and silent by nature. It is not,
+   * and must not be, the impact channel (08 §8.1) — that one is evented and reports
+   * energy.
    *
    * Implemented by summing solver contact impulses ÷ dt rather than by accumulating
    * contact-force *events*. 08 §14 flagged the event path as a risk (events fire only
-   * above a threshold and can drop resting contacts); the impulse walk is the same
-   * number with no event plumbing, so it is what ships. Revisit at step 22 with a
-   * 10-step average in front of you.
+   * above a threshold and can drop resting contacts); the impulse walk is the same number
+   * with no event plumbing. Keep it that way — the event path looks equivalent and is not.
+   *
+   * **This is NOT the Weigh Station's readout**, and returning newtons rather than kg is
+   * the point. It shipped as `contactForceOnKg`, dividing by g inside the physics layer,
+   * which handed callers a mass they had not earned: 15 §7.2's honesty rule is force while
+   * anything is moving and mass only after a stability test. The scale measures the
+   * support force its own compliant transducer applies to a dynamic platter on a prismatic
+   * joint — a modelled load cell, not a contact sum against a rigid static box.
+   *
+   * As a raw magnitude this projects onto no sensing axis, identifies no load path and
+   * models no transducer bandwidth (14 PHY-12). That is correct for a facade primitive and
+   * wrong for an instrument; anything that wants a reading owns that work itself. The
+   * caller this exists for is 10 §1's quasi-static break trigger — the path that notices a
+   * 64 kg cube being *lowered* onto an egg, where impact energy is near zero.
    */
-  contactForceOnKg(h: BodyHandle): number {
+  contactForceN(h: BodyHandle): number {
     const rec = this.#recs.get(h);
     if (!rec) return 0;
     let impulse = 0;
@@ -510,7 +525,7 @@ export class PhysicsWorld {
         for (let i = 0; i < manifold.numContacts(); i++) impulse += manifold.contactImpulse(i);
       });
     });
-    return impulse / this.#world.timestep / GRAVITY_MPS2;
+    return impulse / this.#world.timestep;
   }
 
   // ---- the step ---------------------------------------------------------------
