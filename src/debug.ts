@@ -37,6 +37,8 @@ interface DenseDebug {
   spawn(metal?: MetalId, sizeIn?: number, purity?: number): void;
   setSpec(metal: MetalId, sizeIn: number, purity?: number): void;
   reset(): void;
+  /** The mounted lab, or null. `__dense.lab()?.scale?.state` reads the scale. */
+  lab(): unknown;
   colliders(on: boolean): void;
   /** The M0 go/no-go (08 §11 step 8). */
   jitterTest(seconds?: number): Promise<JitterResult[]>;
@@ -70,6 +72,8 @@ export async function attachDebug(app: App): Promise<void> {
       app.spec = { metal, sideM: sizeIn * IN, purityPctW: purity };
     },
     reset: () => app.reset(),
+    // The active lab, for reading an instrument that has no HUD yet.
+    lab: () => app.labs.active,
     colliders: (on) => overlay.setEnabled(on),
     jitterTest: (seconds = 10) => jitterTest(app, seconds),
     massRatioTest: (seconds = 10, bigIn = 4) => massRatioTest(app, seconds, bigIn),

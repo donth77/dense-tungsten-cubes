@@ -22,6 +22,10 @@ import type { Vec3 } from '../../types.ts';
 
 export type WeighModeId = 'balance' | 'digital-scale';
 
+/** The staging row runs from -this to +this in x, in front of the instrument bay. */
+const STAGING_ROW_HALF = 0.42;
+const STAGING_GAP = 0.02;
+
 export class WeighLab implements Lab {
   readonly id = 'weigh' as const;
   readonly title = 'Weigh Station';
@@ -62,6 +66,43 @@ export class WeighLab implements Lab {
     this.#ctx.ui.toast(mode === 'balance' ? 'Balance' : 'Digital scale — 5 kg max');
   }
 
+  /**
+   * The instrument mounts at the origin, and `config.stage.trayCentre` is ALSO the origin
+   * — so every cube the player brought from the Sandbox is standing exactly where the
+   * balance or the scale is about to appear. Player cubes deliberately survive a lab
+   * switch (08 §9); they just cannot survive it *inside the instrument*.
+   *
+   * Found by hand, not by test: the rigs start with an empty world. In the real app the
+   * 2.4 kg boot cube sat under the platter holding it at rest height, and the scale read
+   * a flat zero with a kilo of tungsten on it.
+   *
+   * 15 §5.1: deterministic, non-overlapping staging slots, never random scatter beside a
+   * moving instrument.
+   */
+  #clearInstrumentVolume(): void {
+    const halfX =
+      this.#mode === 'balance'
+        ? config.weigh.balance.armM + config.weigh.balance.panRadiusM + 0.08
+        : config.weigh.scale.housingHalfM.x + 0.12;
+    const halfZ = 0.3;
+    const ceiling = config.weigh.balance.pivotHeightM + 0.2;
+
+    let cursor = -STAGING_ROW_HALF;
+    for (const e of this.#ctx.entities.all) {
+      const p = e.curr.p;
+      const inside = Math.abs(p.x) < halfX && Math.abs(p.z) < halfZ && p.y < ceiling;
+      if (!inside) continue;
+      const half = e.spec.sideM / 2;
+      cursor += half + STAGING_GAP;
+      this.#ctx.physics.setTransform(
+        e.body,
+        { x: cursor, y: half + 0.004, z: config.weigh.stagingZ },
+        true,
+      );
+      cursor += half;
+    }
+  }
+
   #mount(mode: WeighModeId): void {
     if (mode === 'balance') {
       this.#balance = new BalanceInstrument(this.#ctx);
@@ -73,6 +114,7 @@ export class WeighLab implements Lab {
       this.#scale.build();
       this.#ctx.camera.frameRadius(config.weigh.scale.housingHalfM.z * 4);
     }
+    this.#clearInstrumentVolume();
   }
 
   #unmount(): void {
@@ -113,11 +155,18 @@ export class WeighLab implements Lab {
    * only answers where.
    */
   preferredSpawnPoint(): Vec3 | null {
+    // The next free spot along the staging row, not a fixed point — spawning twice at one
+    // coordinate drops a cube onto the one already there (15 §5.1).
+    let cursor = -STAGING_ROW_HALF;
+    for (const e of this.#ctx.entities.all) {
+      if (Math.abs(e.curr.p.z - config.weigh.stagingZ) > 0.12) continue;
+      cursor = Math.max(cursor, e.curr.p.x + e.spec.sideM / 2);
+    }
     const drop =
       this.#mode === 'balance'
         ? config.weigh.balance.pivotHeightM * 0.55
         : config.weigh.scale.platterRestHeightM + 0.12;
-    return { x: 0, y: drop, z: config.weigh.stagingZ };
+    return { x: cursor + STAGING_GAP + 0.03, y: drop, z: config.weigh.stagingZ };
   }
 
   teardown(): void {

@@ -106,6 +106,18 @@ export class LabManager {
   }
 
   /**
+   * The mounted lab itself.
+   *
+   * Exists so the debug facade can read an instrument before there is any HUD to show it
+   * — which is exactly the state 15 §12 W2 exits in ("each mode works independently
+   * without HUD UI beyond debug readings"). Without it those readings are unreachable and
+   * the claim is untestable by hand.
+   */
+  get active(): Lab | null {
+    return this.#active;
+  }
+
+  /**
    * Monotonic transition token. A lab module is dynamic-`import`ed, so two quick switches
    * are two outstanding promises with no ordering guarantee between them — the slower
    * one can resolve last and build a lab nobody asked for, over the top of the one that
