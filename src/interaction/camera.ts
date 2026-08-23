@@ -16,6 +16,16 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0);
  * The camera never moves without a hand on it — no auto-orbit, no pull-focus. That's
  * the motion-sickness rule, and it also means the toy never appears to act on its own.
  */
+/** How `frameRadius` should frame a region — see the note inside it. */
+export interface FrameOptions {
+  /** 'stage': everything in view on both axes. 'subject': fit the height, let width overflow. */
+  fit?: 'stage' | 'subject';
+  /** Height of the look-at point, metres. Defaults to a little above the floor. */
+  centreYM?: number;
+  /** Breathing room as a multiple of the radius. */
+  margin?: number;
+}
+
 export class CameraRig {
   /** Where we're going. */
   #goal = {
@@ -137,29 +147,46 @@ export class CameraRig {
    * a lab lays out mats over a metre and a half — the default view would show one cube
    * and a wall of oak. A lab declares its own extent and this frames that instead.
    */
-  frameRadius(radiusM: number): void {
+  frameRadius(radiusM: number, opts: FrameOptions = {}): void {
+    this.#lastFrame = { radiusM, opts };
+    const fit = opts.fit ?? 'stage';
     const vFov = (config.camera.fovDeg * Math.PI) / 180;
     const aspect = this.camera.aspect || 1;
-    // Fit BOTH axes. Fitting only the vertical looks right on a 16:9 desktop and then
-    // hangs a lab's mats off both sides of a portrait phone, where the horizontal field
-    // of view is the narrow one.
+    /*
+     * 'stage' fits both axes so the whole thing is in view; 'subject' fits the height
+     * only and lets the surroundings run off the sides.
+     *
+     * Which one is the LAB's call, not the layout's. The Sandbox frames a cube — the
+     * point of the toy — in front of mats that are scenery, and fitting 1.1 m of mats
+     * across a portrait phone's 18-degree horizontal field put the camera 4.3 m away and
+     * made a 2 in cube a dot. The balance is the opposite case: 1.06 m wide and the
+     * subject itself, so on the same phone the height-only fit cropped both pans and the
+     * top of the stand. One rule cannot serve both, and the lab knows which it is.
+     */
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
-    const needed = Math.max(
-      (radiusM * 1.25) / Math.tan(vFov / 2),
-      (radiusM * 1.25) / Math.tan(hFov / 2),
-    );
+    const margin = radiusM * (opts.margin ?? 1.25);
+    const byHeight = margin / Math.tan(vFov / 2);
+    const byWidth = margin / Math.tan(hFov / 2);
+    const needed = fit === 'subject' ? byHeight : Math.max(byHeight, byWidth);
     this.#goal.distM = clamp(needed, config.camera.distMinM, config.camera.distMaxM);
-    this.#goal.target.set(config.camera.target.x, radiusM * 0.12, config.camera.target.z);
+    this.#goal.target.set(
+      config.camera.target.x,
+      opts.centreYM ?? radiusM * 0.12,
+      config.camera.target.z,
+    );
   }
 
   /**
-   * The camera has to know about the UI (12 §3): with a bottom sheet open, the visual
-   * centre of the *free* area is well above the centre of the canvas, so a cube framed
-   * at the geometric centre sits behind the sheet.
-   *
-   * @param yPx shift framed content up by this many CSS px (phone-portrait)
-   * @param xPx shift framed content left by this many CSS px (landscape rail)
+   * Re-applies the last frame at the current aspect. The layout manager calls this on
+   * resize and orientation change (12 §3: "re-fit the camera distance so the stage still
+   * frames"), which is the only time the fit can change without a lab asking.
    */
+  refit(): void {
+    if (this.#lastFrame) this.frameRadius(this.#lastFrame.radiusM, this.#lastFrame.opts);
+  }
+
+  #lastFrame: { radiusM: number; opts: FrameOptions } | null = null;
+
   setViewportOffset(xPx: number, yPx: number): void {
     this.#viewOffsetPx = { x: xPx, y: yPx };
     this.#applyViewOffset();

@@ -84,6 +84,14 @@ describe('the scale refuses to name a mass it has not earned', () => {
 });
 
 describe('zero and tare', () => {
+  it('reports itself unzeroed until zero() is called, so nothing shows as mass before', () => {
+    const sig = new ScaleSignal();
+    const s = settle(sig, S.platterKg * G, 3);
+    expect(s.zeroed).toBe(false);
+    expect(sig.zero(true)).toBe(true);
+    expect(sig.state.zeroed).toBe(true);
+  });
+
   it('zeroes the empty platter to 0.00 kg', () => {
     const sig = new ScaleSignal();
     settle(sig, S.platterKg * G, 3);
@@ -136,9 +144,9 @@ describe('zero and tare', () => {
     const sig = new ScaleSignal();
     settle(sig, S.platterKg * G, 3);
     sig.zero(true);
-    settle(sig, (S.platterKg + 4) * G, 3);
+    settle(sig, (S.platterKg + S.ratedKg * 0.8) * G, 3);
     expect(sig.tare()).toBe(true);
-    const over = settle(sig, (S.platterKg + 6) * G, 3);
+    const over = settle(sig, (S.platterKg + S.ratedKg * 1.2) * G, 3);
     expect(over.status).toBe('overload');
     expect(over.stableMassKg).toBeNull();
   });

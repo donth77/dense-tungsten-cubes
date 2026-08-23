@@ -64,10 +64,19 @@ export function mass(kg: number, units: Units = 'si'): Reading {
 /** Fixed-decimal mass, for instruments that must not change width as they update. */
 export function massFixed(kg: number, decimals = 2, units: Units = 'si'): Reading {
   if (bad(kg)) return NO_READING;
-  const lb = kg * LB_PER_KG;
-  const si = `${kg.toFixed(decimals)} kg`;
+  // Never "-0.00". A zeroed scale's net reading sits a few thousandths either side of
+  // zero, and `(-0.003).toFixed(2)` is "-0.00" — a minus sign on nothing. Anything that
+  // would round to zero is zero, in both units, and the sign goes with it.
+  const siKg = snapZero(kg, decimals);
+  const lb = snapZero(kg * LB_PER_KG, decimals);
+  const si = `${siKg.toFixed(decimals)} kg`;
   const imp = `${lb.toFixed(decimals)} lb`;
   return units === 'si' ? { primary: si, secondary: imp } : { primary: imp, secondary: si };
+}
+
+/** A value that would print as zero at this precision IS zero — and positive zero. */
+function snapZero(v: number, decimals: number): number {
+  return Math.abs(v) < 0.5 * 10 ** -decimals ? 0 : v;
 }
 
 // ---- length ----------------------------------------------------------------------

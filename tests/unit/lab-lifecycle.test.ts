@@ -21,6 +21,7 @@ function ctx(): LabContext {
     // Only what LabManager itself touches: it emits 'lab-changed' on a successful build.
     bus: { emit: () => undefined } as unknown as LabContext['bus'],
     camera: { frameRadius: () => undefined },
+    units: () => 'si' as const,
     ui: { setControls: () => undefined, toast: () => undefined },
   };
 }

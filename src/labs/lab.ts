@@ -9,8 +9,9 @@ import type { Vec3 } from '../types.ts';
  * The lab contract (05, 08 §9).
  *
  * A lab owns its statics, its props and its panel — and `teardown()` must remove
- * everything `build()` added. Player cubes are NOT a lab's property: they persist
- * across lab switches because they are the player's tray (08 §9).
+ * everything `build()` added. Player cubes are NOT a lab's property either: `app.ts`
+ * clears them before a switch and spawns the new lab's first one after. 08 §9 had them
+ * persist as "the player's tray"; see `App.#switchLab` for why that was dropped.
  */
 
 export interface LabContext {
@@ -20,8 +21,24 @@ export interface LabContext {
   scene: THREE.Scene;
   bus: EventBus;
   ui: LabUi;
-  /** Narrow camera seam — a lab may frame its own stage, nothing more. */
-  camera: { frameRadius(radiusM: number): void };
+  /**
+   * Narrow camera seam — a lab may frame its own stage, nothing more. Whether the width
+   * must fit too is the lab's call: a wide instrument says 'stage', a cube among
+   * scenery says 'subject'.
+   */
+  camera: {
+    frameRadius(
+      radiusM: number,
+      opts?: { fit?: 'stage' | 'subject'; centreYM?: number; margin?: number },
+    ): void;
+  };
+  /**
+   * The player's unit setting, as a getter.
+   *
+   * A function rather than a value because it changes while a lab is mounted, and a seam
+   * rather than a `ui/` import because labs/ sits below ui/ and the lint rule enforces it.
+   */
+  units(): 'si' | 'imperial';
 }
 
 /** One button a lab wants offered. */

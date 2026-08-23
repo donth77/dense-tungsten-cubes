@@ -308,8 +308,15 @@ export const config = {
     stagingZ: 0.48,
 
     scale: {
-      /** Gross capacity above the tared platter (15 §1). */
-      ratedKg: 5,
+      /*
+       * Gross capacity above the tared platter. 15 §1 said 5 kg, to match a real kitchen
+       * scale — but in THIS app a 3 in tungsten cube is 8 kg and a 4 in is 18.9, so a 5 kg
+       * scale cannot weigh the cubes the toy is about. 20 kg covers every cube in the
+       * size-button row; a 5 in (36.9 kg) or 6 in (63.7 kg) tungsten cube reads OL, which
+       * is itself a lesson. 50 kg was tried and does not stabilise at 60 Hz for any platter
+       * up to 8 kg or travel up to 12 mm — the cell gets too stiff for its own platter.
+       */
+      ratedKg: 20,
       /** Displayed division, and the minimum indication below which no hundredths show. */
       divisionKg: 0.01,
       minIndicationKg: 0.05,
@@ -317,33 +324,28 @@ export const config = {
       /*
        * PLATTER MASS IS A NUMERICAL PARAMETER, NOT A COSMETIC ONE.
        *
-       * 15 §7.3 seeds 0.6 kg. Measured, **0.6 kg cannot work at 60 Hz at any travel or
-       * damping in the swept range** — the empty platter never settles. Two independent
-       * limits bind, both evaluated on the EMPTY platter because that is the lightest
-       * mass the cell ever sees:
+       * The spring rate is fixed by rated load over rated travel, so a light platter puts a
+       * stiff spring on a small mass, and symplectic Euler needs `sqrt(k/m)·dt < 2` on the
+       * EMPTY platter — the lightest mass the cell ever sees. 15 §7.3's 0.6 kg seed cannot
+       * work at any travel; at 5 kg rated the W0 sweep found 2.5 kg / 8 mm.
        *
-       *     spring:            sqrt(k/m)·dt < 2
-       *     explicit damper:   c·dt/m       < 2
+       * Re-swept for 20 kg rated (loads 0 / 1 / 5 / 10 / 19 kg, all must settle inside 2 s
+       * to 100 ppm), with the damping clamp scaled to the carried load:
        *
-       * and k is fixed by rated load over rated travel, so a light platter forces a stiff
-       * spring onto a small mass. At 0.6 kg / 6 mm, sqrt(k/m)·dt = 2.06 — over the limit.
+       *      platter  travel  | result
+       *      2.5-3    6-10 mm | empty platter never settles
+       *      4        6 mm    | never settles
+       *      4        8-10 mm | passes, 0.55-0.60 s
+       *      5        6-10 mm | passes, 0.48-0.58 s
        *
-       * Minimum platter mass that passes 0/1/5 kg, measured (clamped damper):
+       * 5 kg / 8 mm: settles in 0.50 s, worst error 1.5e-5 kg, sqrt(k/m)·dt = 1.30, and a
+       * 19 kg drop peaks at 12.7 mm against a 16 mm stop. A heavy platter costs nothing
+       * visible — 15 §7.4 tares it away.
        *
-       *      travel   6 mm ->  2.5 kg        travel  12 mm -> 1.5 kg
-       *      travel   8 mm ->  2.0 kg        travel  16 mm -> 1.5 kg
-       *      travel  10 mm ->  1.5 kg
-       *
-       * 2.5 kg at 8 mm is the pick: settles in 1.20 s against a 2 s gate, raw error
-       * 3.4e-7 kg against a 1e-3 kg gate, steady-state span 0.0000 N, and sqrt(k/m)·dt =
-       * 1.01, half the stability limit. A heavy platter costs nothing visible because
-       * 15 §7.4 excludes the empty-platter indication from capacity — it is tared away.
-       *
-       * Additional solver iterations DO NOT HELP: +0/+4/+16/+32 all fail identically on
-       * the 0.6 kg seed, because the instability is in our own explicit force integration,
-       * outside the solver entirely.
+       * Additional solver iterations do not help any of this: the instability is in our
+       * own explicit force integration, outside the solver.
        */
-      platterKg: 2.5,
+      platterKg: 5,
       /** Solver-resolvable travel at rated load. Larger than a real strain gauge (15 §7.2). */
       travelM: 0.008,
       /**
@@ -359,11 +361,10 @@ export const config = {
        */
       clampDamping: true,
       /**
-       * Lower stop as a multiple of rated travel. A legitimate 5 kg placement peaks at
-       * 12.43 mm of compression — 1.55x the static 8 mm — so the first choice of 1.6x
-       * (12.8 mm) left 0.37 mm of margin and would have flashed OVERLOAD on a valid
-       * weighing. 2.0x keeps the stop clear of every in-range placement while still
-       * engaging before proof force on a real overload.
+       * Lower stop as a multiple of rated travel. A legitimate rated placement peaks at
+       * about 1.6x the static travel (12.7 mm against 8 mm at 20 kg), so 1.6x would flash
+       * OVERLOAD on a valid weighing. 2.0x keeps the stop clear of every in-range placement
+       * while still engaging before proof force on a real overload.
        */
       stopFactor: 2.0,
       /** Proof force as a multiple of rated gross weight; reaching it is OVERLOAD. */
@@ -389,6 +390,13 @@ export const config = {
       loadMotionMps: 0.02,
       /** The DOM does not need 60 updates a second; transitions publish immediately. */
       publishHz: 10,
+      /**
+       * OVERLOAD is a claim too, and gets a dwell like STABLE does. Without one a
+       * legitimate 4 in tungsten drop flashed OL three times on its bounces — each contact
+       * spike crossed proof force for a single frame — before settling to a correct
+       * reading. A real overload holds; a spike does not.
+       */
+      overloadDwellS: 0.25,
 
       /*
        * Stage layout (15 §5.1).
@@ -398,10 +406,24 @@ export const config = {
        * platter's bottom reached 0.039 under a 1 kg load — so the housing quietly carried
        * the load and a kilo cube weighed 0.15 kg.
        */
-      housingHalfM: { x: 0.09, y: 0.011, z: 0.13 },
-      platterHalfM: { x: 0.065, y: 0.0075, z: 0.065 },
-      /** Top of the housing, and therefore the platter's unloaded height. */
-      platterRestHeightM: 0.05,
+      /*
+       * The prepared asset is baked with a 45-degree yaw so its display faces the default
+       * camera (15 §5.1). The collider footprint is therefore the ROTATED bounding box,
+       * which is squarer than the model's own.
+       */
+      housingHalfM: { x: 0.1763, y: 0.0117, z: 0.1763 },
+      platterHalfM: { x: 0.0936, y: 0.0084, z: 0.0936 },
+      /*
+       * The platter's unloaded height — deliberately ABOVE where the asset parks it.
+       *
+       * The model sits its platter INSIDE the housing, as a real scale does, because a
+       * real strain gauge deflects by microns. Ours moves millimetres so a 60 Hz solver
+       * can resolve it (15 §7.2, which says to design the housing seam around that and
+       * document it). The seam must clear the FULL stop travel, or the housing becomes the
+       * stop: rest 52 mm, platter underside 43.6 mm, housing top 23.4 mm, so a platter on
+       * its 16 mm stop still clears the housing by 4 mm.
+       */
+      platterRestHeightM: 0.052,
     },
 
     balance: {
@@ -469,16 +491,54 @@ export const config = {
        * -1.8 to -2.2 deg almost everywhere, so this is a broad optimum rather than a
        * knife edge.
        */
-      keelDropM: 0.06,
-      keelMassFraction: 0.6,
+      keelDropM: 0.12,
+      keelMassFraction: 0.7,
       /**
-       * Viscous pivot torque, N·m·s/rad, clamped like the cell damper. Measured after a
-       * 1.2 rad/s nudge: 0.3 swings for 4.8 s (past 15 §6.1's 2–3 s target), 1.5 kills the
-       * nudge inside one step and reads dead, 0.75 settles in 1.47 s with a visible swing.
+       * Viscous pivot friction, applied implicitly (see BalanceInstrument.beforePhysics).
+       *
+       * Retuned for the RIGID-PAN beam, which carries both 1.4 kg pans at ±0.37 m and so
+       * has roughly five times the rotational inertia the hung-pan version did. 0.75 was
+       * chosen for that lighter beam and leaves this one badly underdamped: it rings for
+       * ~2.5 s after every placement, which is the "shaking" a cube on the pan produces.
+       *
+       * Measured, dropping a 2 in tungsten cube (overshoot past the final angle):
+       *
+       *      0.75 -> 0.84 deg    20 -> 0.55 deg
+       *      3    -> 1.90 deg, never settles in 15 s
+       *      8    -> 1.11 deg, never settles in 15 s
+       *      45   -> 0.62 deg    90 -> 0.30 deg, settles in 2.15 s
+       *
+       * The middle of that range being the worst is not a typo — 3 and 8 sit where the
+       * damping resonates with the contact solver. Do not interpolate into it.
        */
-      pivotDamping: 0.75,
-      /** Beam travel. The stop holds to within ~0.19 deg of solver tolerance, as 15 §13.2 allows. */
+      pivotDamping: 90,
+      /**
+       * Beam travel, enforced by PHYSICAL STOPS the beam rests on (see below). The joint
+       * limit is kept a little wider as a backstop and no longer does the work.
+       */
       limitDeg: 12,
+      /*
+       * The stops are blocks on the stand that the beam lands against, because a joint
+       * limit alone cannot hold a heavy load still.
+       *
+       * A revolute limit is a soft constraint. Measured residual motion three seconds
+       * after a cube lands, with the limit doing the stopping:
+       *
+       *      1.5 in (1.0 kg)  -> 0.00 deg, dead still
+       *      2   in (2.4 kg)  -> 0.00 deg, dead still
+       *      3   in (8.0 kg)  -> 3.66 deg, 33 reversals
+       *      4   in (18.9 kg) -> 5.33 deg, 34 reversals
+       *
+       * Past roughly the assembly's own 4.2 kg the beam is pushed through the limit,
+       * shoved back, and never settles — an 11 Hz limit cycle. A contact has friction and
+       * restitution and the solver treats it as an ordinary collision, which it can hold.
+       *
+       * `stopRadiusM` is where they sit out from the pivot: clear of the column, far
+       * inboard of the pans, and close enough in that the beam's own bar hides them.
+       */
+      stopRadiusM: 0.09,
+      /** Backstop only. Wider than limitDeg so the contacts are what the beam meets. */
+      jointLimitMarginDeg: 3,
       /*
        * APPROACH BRAKING — the last few degrees before the stop, where damping ramps up.
        *
@@ -490,7 +550,12 @@ export const config = {
        * A real balance answers this with ARRESTMENT: the beam is locked while you load it.
        * This is the cheap equivalent — the beam eases into its stop instead of hitting it.
        */
-      stopApproachDeg: 4,
+      /*
+       * Narrow, and it has to stay clear of where the beam actually rests. At 8 degrees
+       * the band began at 12-8 = 4, and a typical loaded beam settles at ~4 — so the brake
+       * engaged and released around the resting angle on every step.
+       */
+      stopApproachDeg: 3,
       stopBrakingDamping: 40,
       /** Per pan (15 §1). Physical fit and load capacity are deliberately separate facts. */
       capacityKgPerPan: 10,
@@ -511,21 +576,53 @@ export const config = {
       pivotHeightM: 0.6834,
       panRadiusM: 0.16,
       panThicknessM: 0.004,
-      /**
-       * Shallow, per 15 §6.3 — but not so shallow that a 2 in cube walks out of the dish
-       * as the pan tilts. A cube's centre of mass sits well above any rim this low; the
-       * rim's job is to catch a slide, not to contain a topple.
+      /*
+       * MEASURED OFF THE PREPARED MESH, so a cube sits ON the dish rather than above it.
+       * The asset's dish floor is at -10.5 mm in the pan's frame (rising to -6 mm toward
+       * the edge) and its rim crests at +10.5 mm at r = 0.15. With the collider's top at
+       * +4 mm — the pan origin plus half its thickness — every cube floated 14.5 mm above
+       * the metal, and an invisible rim wall stood 13.5 mm proud of the visible one.
        */
-      panRimHeightM: 0.012,
-      /**
-       * The hook-ring triangle the three ropes of each bridle hang from.
+      panFloorM: -0.009,
+      panRimRadiusM: 0.152,
+      panRimTopM: 0.0105,
+      /*
+       * Where the three drawn chains leave the beam, per side. VISUAL ONLY now — the pans
+       * are rigid with the beam, so nothing hangs from these.
        *
-       * Wider than it looks like it should be, and measured: a narrow ring makes a bridle
-       * that barely resists tilt, because three ropes converging on almost one point leave
-       * the pan free to rotate under it. At a 2 kg pan, widening 20 mm -> 50 mm took the
-       * worst pan tilt from 25.9 deg to 8.9.
+       * Small, and it has to be: the beam mesh ends at `armM`, and the old 50 mm value was
+       * a *bridle* radius added OUTSIDE that, so every chain began 50 mm past the tip of
+       * the beam, attached to nothing. That is what "the strings float at the top" was.
        */
-      hookRingM: 0.05,
+      /*
+       * THE LOAD PATH HAS A FILTER IN IT, and without one the instrument does not work.
+       *
+       * A cube landing on a pan delivers a one-step contact spike of several times its
+       * weight — 453 N from an 8 kg cube dropped 2 cm. Turned straight into torque, that
+       * kicks the beam to 1.7 rad/s and the pan drops out from under the cube faster than
+       * the cube can fall from rest; the gap opens, the load reads zero, the keel pulls
+       * the pan back up into the falling cube at 890 N, and it never stops. Every angle
+       * measured before this filter existed was the time-average of a bouncing cube.
+       *
+       * A real beam cannot respond to a 16 ms spike — the bearing is compliant and the
+       * beam has inertia — and this is that, in the same two-pole form the digital scale
+       * already uses on its cell (15 §7.5). The cutoff is deliberately lower than the
+       * scale's 4 Hz: a beam is slower than a load cell.
+       */
+      loadFilterHz: 2,
+      /**
+       * Cap on what one pan may report, as a multiple of its rated capacity's weight.
+       * Anything above it is an impact, not a load, and the bearing would not carry it.
+       */
+      loadProofFactor: 2.5,
+
+      hookRingM: 0.006,
+      /**
+       * Where a chain leaves the hook: the BOTTOM of the ring, which on the prepared mesh
+       * spans -17 to +27 mm at the tips. +18 mm (the first value) hung the chains from
+       * the top of the ring, which looks wrong the moment the camera moves.
+       */
+      hookHeightM: -0.012,
       /*
        * STIRRUP HEIGHT — how far ABOVE the dish the three ropes attach.
        *
@@ -538,10 +635,17 @@ export const config = {
        */
       panStirrupM: 0.075,
 
-      /** Column and base, measured off the prepared asset so collider and mesh agree. */
-      columnRadiusM: 0.036,
+      /*
+       * Stand, measured off the prepared mesh (radius by height, pivot at 0): a 0.16 m
+       * foot 20 mm thick, a bulb of ~60 mm radius centred 0.55 m below the pivot, and a
+       * 15-23 mm stem above it. One 36 mm column matched none of those three.
+       */
       baseRadiusM: 0.16,
-      baseThicknessM: 0.008,
+      baseThicknessM: 0.02,
+      bulbRadiusM: 0.05,
+      bulbCentreBelowPivotM: 0.55,
+      bulbHalfHeightM: 0.06,
+      stemRadiusM: 0.02,
       /**
        * How far out in Z each half of the counterweight sits. It has to CLEAR the column,
        * i.e. exceed `columnRadiusM + KEEL_HALF` — a keel that overlaps the stand makes the
@@ -591,7 +695,11 @@ export const config = {
        * How close to the 12 deg stop counts as ON it. The solver overshoots the limit by
        * ~0.19 deg, so a beam pinned by a real imbalance must not be read as merely tilted.
        */
-      atStopMarginDeg: 0.4,
+      // 1 deg rather than 0.4: the stop posts and the soft contact between them leave the
+      // beam resting about 0.75 deg short of the nominal limit, and a beam on its stop is
+      // held there (see BalanceInstrument.beforePhysics) — so "on the stop" has to include
+      // where it actually comes to rest.
+      atStopMarginDeg: 1.0,
     },
   },
 };

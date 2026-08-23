@@ -197,14 +197,24 @@ class ColliderOverlay {
         }
         group.add(seg);
       }
-      // Track the body each frame without rebuilding anything, exactly as the cube
-      // wireframes do — and read through the facade, never a Rapier handle.
-      group.onBeforeRender = (): void => {
+      /*
+       * Track the body each frame without rebuilding anything, exactly as the cube
+       * wireframes do — and read through the facade, never a Rapier handle.
+       *
+       * The hook goes on every CHILD, not on the group: `onBeforeRender` only fires for
+       * objects the renderer actually draws, and a Group is not one. Hung on the group
+       * it never ran, and every compound was drawn with its body at the origin — the
+       * balance's stand appeared a full pivot-height below the stand, which read as the
+       * physics being misaligned when it was only the overlay.
+       */
+      const follow = (): void => {
         if (!this.app.physics.hasBody(handle)) return;
         const t = this.app.physics.transformOf(handle);
         group.position.set(t.p.x, t.p.y, t.p.z);
         group.quaternion.set(t.q.x, t.q.y, t.q.z, t.q.w);
       };
+      for (const child of group.children) child.onBeforeRender = follow;
+      follow();
       this.#propGroups.set(handle, group);
       this.#group.add(group);
     }

@@ -25,6 +25,20 @@
 #app.phone-landscape .topbar {
   height: calc(40px + var(--safe-t));
 }
+/* 13 §5.5: on a phone the bar is wordmark, tabs, units and mute — "status only" (12 §3).
+   Six icon buttons after the tabs put units, mute and help at x = 395-551 on a 390px
+   screen, i.e. off it entirely: phones had no unit toggle, no mute and no help. The
+   view-reset, engraving and grip buttons are the ones to go; help stays because it is
+   the one control that explains the others. Grip is a real loss on touch (no two-hand
+   mode) and is flagged for the paged sheet in W3, where it has a row to live in. */
+#app.phone-portrait .topbar .viewbtn,
+#app.phone-portrait .topbar .engravebtn,
+#app.phone-portrait .topbar .gripbtn {
+  display: none;
+}
+#app.phone-portrait .topbar {
+  gap: var(--s2);
+}
 
 .wordmark {
   font: 600 var(--t-base) / 1 var(--disp);
@@ -401,8 +415,22 @@
   left: var(--s4);
   right: var(--s4);
   width: auto;
-  bottom: calc(100% - 100%);
   bottom: var(--infocard-bottom, 300px);
+}
+/* 13 §8's phone card is four cells — mass and side, each with its secondary unit — and
+   nothing else. The desktop card's density, volume and twin sentence put it at 276px on
+   an 844px screen, parked across the middle of the canvas with the cube behind it. Same
+   DOM; the extra cells and the twin line are simply not shown here. */
+#app.phone-portrait .infocard .cell:nth-child(n + 3),
+#app.phone-portrait .infocard .twin,
+#app.phone-landscape .infocard .cell:nth-child(n + 3),
+#app.phone-landscape .infocard .twin {
+  display: none;
+}
+#app.phone-portrait .infocard .cells,
+#app.phone-landscape .infocard .cells {
+  grid-template-columns: 1fr 1fr;
+  row-gap: 0;
 }
 #app.phone-landscape .infocard {
   top: calc(40px + var(--safe-t) + var(--s3));
@@ -600,6 +628,13 @@
 #app.phone-portrait .labpanel {
   left: var(--s4);
   bottom: calc(var(--dock-height, 280px) + var(--s3));
+}
+/* The card and the lab panel are anchored to the same spot above the sheet, so with a
+   cube selected they were drawn on top of each other. On a phone the card wins: you
+   tapped a cube, you want its numbers, and the line-ups come back the moment you
+   dismiss it. 15 §10.2's paged sheet is the real answer and is W3's. */
+#app.phone-portrait.has-card .labpanel {
+  display: none;
 }
 #app.phone-landscape .labpanel {
   left: calc(var(--s3) + var(--safe-l));

@@ -60,6 +60,11 @@ export interface ScaleState {
   netForceN: number;
   /** Only ever set when `status === 'stable'`. Null is the honest answer otherwise. */
   stableMassKg: number | null;
+  /**
+   * Whether the empty platter has been zeroed out yet. Until it has, every reading
+   * includes the platter's own 5 kg and none of them may be shown as a mass.
+   */
+  zeroed: boolean;
   displayedDivisions: number | null;
   status: ScaleStatus;
   stableForS: number;
@@ -132,7 +137,9 @@ export class ScaleSignal {
 
   #emptyOffsetN = 0;
   #tareOffsetN = 0;
+  #zeroed = false;
   #stableForS = 0;
+  #overForS = 0;
   #status: ScaleStatus = 'initializing';
   #state: ScaleState;
 
@@ -152,6 +159,7 @@ export class ScaleSignal {
       netForceN: 0,
       stableMassKg: null,
       displayedDivisions: null,
+      zeroed: false,
       status: 'initializing',
       stableForS: 0,
       lowerStop: false,
@@ -194,9 +202,11 @@ export class ScaleSignal {
 
     this.#stableForS = quiet ? this.#stableForS + dt : 0;
 
-    // Invalid states win over stability, and each one refuses to name a mass.
+    // Invalid states win over stability, and each one refuses to name a mass. Overload
+    // has to PERSIST: a landing spike crosses proof force for a frame and is not one.
     const overCapacity = gross > S.ratedKg * this.#g;
-    if (s.atProof || s.onStop || overCapacity) {
+    this.#overForS = s.atProof || s.onStop || overCapacity ? this.#overForS + dt : 0;
+    if (this.#overForS >= S.overloadDwellS) {
       this.#status = 'overload';
     } else if (s.partialSupport) {
       this.#status = 'partial-support';
@@ -222,6 +232,7 @@ export class ScaleSignal {
       netForceN: net,
       stableMassKg: divisions === null ? null : divisions * S.divisionKg,
       displayedDivisions: divisions,
+      zeroed: this.#zeroed,
       status: this.#status,
       stableForS: this.#stableForS,
       lowerStop: s.onStop,
@@ -241,6 +252,7 @@ export class ScaleSignal {
     if (!this.isStable || !volumeEmpty) return false;
     this.#emptyOffsetN = this.#lp2.value;
     this.#tareOffsetN = 0;
+    this.#zeroed = true;
     this.#resetDwell();
     return true;
   }
@@ -271,8 +283,22 @@ export class ScaleSignal {
 
   #resetDwell(): void {
     this.#stableForS = 0;
+    this.#overForS = 0;
     this.#forceWindow.reset();
     this.#travelWindow.reset();
     this.#status = 'dynamic';
+    // Published at once, not at the next update: a caller that zeroes and then reads
+    // `state` in the same step must see the zero, or the LCD shows the platter's weight
+    // for one more frame and a test reads a stale flag.
+    this.#state = {
+      ...this.#state,
+      emptyOffsetN: this.#emptyOffsetN,
+      tareOffsetN: this.#tareOffsetN,
+      zeroed: this.#zeroed,
+      status: 'dynamic',
+      stableForS: 0,
+      stableMassKg: null,
+      displayedDivisions: null,
+    };
   }
 }

@@ -2,7 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { config } from '../../src/config.ts';
 import { buildBalance, buildScale, spikeWorld, DT, G, tail, tailSpan } from './weigh-rig.ts';
 
-const S = config.weigh.scale;
+/*
+ * FROZEN AT THE W0 VALUES, for the same reason as W0_BALANCE below.
+ *
+ * W2 retuned the platter's travel and stop factor to fit the prepared kitchen-scale
+ * asset, whose platter parks 1 mm inside its housing. Left reading live config, these
+ * gates start grading an instrument they never validated — the first symptom was a
+ * legitimate rated placement measuring as if it were on the stop.
+ *
+ * The live gates for the shipped scale are in `weigh-instruments.test.ts`.
+ */
+const S = {
+  ratedKg: 5,
+  divisionKg: 0.01,
+  minIndicationKg: 0.05,
+  platterKg: 2.5,
+  travelM: 0.008,
+  zeta: 1.0,
+  clampDamping: true,
+  stopFactor: 2.0,
+  proofFactor: 1.5,
+  stabilityWindowS: 0.5,
+} as const;
 const B = config.weigh.balance;
 
 /**

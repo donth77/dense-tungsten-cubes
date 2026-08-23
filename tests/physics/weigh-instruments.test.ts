@@ -52,6 +52,7 @@ class Rig {
       scene: this.scene,
       bus: { emit: () => undefined } as unknown as LabContext['bus'],
       camera: { frameRadius: () => undefined },
+      units: () => 'si' as const,
       ui: { setControls: () => undefined, toast: () => undefined },
     };
   }
@@ -99,6 +100,26 @@ async function scaleRig(): Promise<{ rig: Rig; scale: ScaleInstrument }> {
 }
 
 describe('the digital scale', () => {
+  it('zeroes itself once the empty platter settles, without being asked', async () => {
+    // The platter weighs 5 kg. A scale that showed that with nothing on it would be
+    // wrong in the most visible way possible, and it did, until this.
+    const pw = await PhysicsWorld.create();
+    pw.addStaticBox(
+      { x: 3, y: config.stage.floorThicknessM / 2, z: 3 },
+      { x: 0, y: -config.stage.floorThicknessM / 2, z: 0 },
+      'concrete',
+    );
+    const rig = new Rig(pw);
+    const scale = new ScaleInstrument(rig.ctx);
+    scale.build();
+    expect(scale.state.zeroed).toBe(false);
+    rig.run(scale, 3); // nobody calls zero()
+    expect(scale.state.zeroed).toBe(true);
+    expect(scale.state.status).toBe('under-min');
+    expect(Math.abs(scale.state.grossForceN)).toBeLessThan(0.1);
+    pw.free();
+  });
+
   it('zeroes an empty platter to nothing', async () => {
     const { rig, scale } = await scaleRig();
     rig.run(scale, 2);
@@ -133,6 +154,15 @@ describe('the digital scale', () => {
     }
   });
 
+  it('weighs a 4 in tungsten cube — the reason the rating is 20 kg', async () => {
+    const { rig, scale } = await scaleRig();
+    rig.addCube('W', 4, { x: 0, y: scale.platterTopY + 0.04, z: 0 });
+    rig.run(scale, 6);
+    expect(scale.state.status).toBe('stable');
+    expect(scale.state.stableMassKg).toBeCloseTo(cubeMassKg('W', 4 * IN, 95), 1);
+    rig.pw.free();
+  });
+
   it('adds up a stack rather than weighing only the bottom cube', async () => {
     const { rig, scale } = await scaleRig();
     const a = rig.addCube('Al', 1.5, { x: 0, y: scale.platterTopY + 0.02, z: 0 });
@@ -162,8 +192,10 @@ describe('the digital scale', () => {
   });
 
   it('goes OVERLOAD past capacity and names no mass', async () => {
+    // 5 in tungsten is 36.9 kg against a 20 kg rating. (3 in, at 8 kg, used to be the
+    // overload case when the scale was rated 5 kg; it is a legitimate weighing now.)
     const { rig, scale } = await scaleRig();
-    rig.addCube('W', 3, { x: 0, y: scale.platterTopY + 0.05, z: 0 });
+    rig.addCube('W', 5, { x: 0, y: scale.platterTopY + 0.05, z: 0 });
     rig.run(scale, 5);
     expect(scale.state.status).toBe('overload');
     expect(scale.state.stableMassKg).toBeNull();
@@ -344,7 +376,8 @@ describe('the equal-arm balance', () => {
     const before = { bodies: pw.bodyCount, joints: pw.jointCount };
     const bal = new BalanceInstrument(rig.ctx);
     bal.build();
-    expect(pw.jointCount).toBe(7); // one revolute + six ropes
+    // One revolute at the pivot, and nothing else: the pans are part of the beam.
+    expect(pw.jointCount).toBe(1);
     bal.teardown();
     expect(pw.bodyCount).toBe(before.bodies);
     expect(pw.jointCount).toBe(before.joints);

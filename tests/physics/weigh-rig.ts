@@ -66,6 +66,12 @@ export interface ScaleParams {
    * an instrument that has to be numerically boring.
    */
   clampDamping: boolean;
+  /**
+   * Clamp against the platter alone, or against platter plus the load the cell last
+   * measured. The second is what a 50 kg rating needs: a damper capped at "enough to
+   * stop 2.5 kg" is twenty times too weak once 50 kg is sitting on the platter.
+   */
+  clampMass?: 'platter' | 'loaded';
   preloadN?: number;
   /** Proof force as a multiple of rated gross weight; reaching it is OVERLOAD. */
   proofFactor?: number;
@@ -103,6 +109,7 @@ export function buildScale(world: RAPIER.World, p: ScaleParams): ScaleRig {
   const proofN = proofFactor * (p.platterKg + p.ratedKg) * G;
 
   const y0 = 0.05;
+  let lastF = 0;
 
   const housing = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0));
   // The housing floor. A load that misses the platter must land on something, or
@@ -155,10 +162,17 @@ export function buildScale(world: RAPIER.World, p: ScaleParams): ScaleRig {
       let damping = c * xdot;
       if (p.clampDamping) {
         // Never more than the impulse that would bring the platter to rest this step.
-        const maxDamp = (Math.abs(vy) * platter.mass()) / DT;
+        // The cell's own reading IS the carried mass (it supports the platter too), so
+        // it is not added to the platter — that would double-count and let the damper
+        // reverse the platter's velocity, which is the instability the clamp exists to
+        // prevent.
+        const carried =
+          p.clampMass === 'loaded' ? Math.max(platter.mass(), lastF / G) : platter.mass();
+        const maxDamp = (Math.abs(vy) * carried) / DT;
         damping = Math.max(-maxDamp, Math.min(maxDamp, damping));
       }
       const F = Math.min(Math.max(k * x + damping + preloadN, 0), proofN);
+      lastF = F;
 
       platter.addForce({ x: 0, y: F, z: 0 }, true);
       world.step();

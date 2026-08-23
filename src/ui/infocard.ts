@@ -70,15 +70,20 @@ export class InfoCard {
     this.settings.subscribe(() => this.#render());
   }
 
+  /** Fired after show()/hide(). The HUD uses it to re-measure what the card covers. */
+  onVisibility: ((visible: boolean) => void) | null = null;
+
   show(spec: CubeSpec): void {
     this.#spec = spec;
     this.root.style.display = '';
     this.#render();
+    this.onVisibility?.(true);
   }
 
   hide(): void {
     this.#spec = null;
     this.root.style.display = 'none';
+    this.onVisibility?.(false);
   }
 
   get isVisible(): boolean {

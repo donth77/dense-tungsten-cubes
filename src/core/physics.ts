@@ -17,6 +17,7 @@ import type {
   Quat,
   RevoluteJointSpec,
   RopeJointSpec,
+  SphericalJointSpec,
   SurfaceId,
   Transform,
   Vec3,
@@ -302,7 +303,11 @@ export class PhysicsWorld {
    */
   addCompound(spec: CompoundBodySpec): BodyHandle {
     const desc =
-      spec.kind === 'fixed' ? RAPIER.RigidBodyDesc.fixed() : RAPIER.RigidBodyDesc.dynamic();
+      spec.kind === 'fixed'
+        ? RAPIER.RigidBodyDesc.fixed()
+        : spec.kind === 'kinematic'
+          ? RAPIER.RigidBodyDesc.kinematicPositionBased()
+          : RAPIER.RigidBodyDesc.dynamic();
     desc.setTranslation(spec.at.x, spec.at.y, spec.at.z);
     if (spec.kind === 'dynamic') desc.setCcdEnabled(spec.ccd ?? false);
     if (spec.additionalSolverIterations) {
@@ -424,6 +429,60 @@ export class PhysicsWorld {
     return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
   }
 
+  /**
+   * A ball joint: two anchors held coincident, all three rotations free.
+   *
+   * The stable way to hang a balance pan. Three ropes look more like a real bridle and
+   * are *inequality* constraints — each goes slack the instant the pan tilts toward it —
+   * so at four solver iterations the pan has almost no restoring torque and turns over
+   * under its own load. A single pivot placed ABOVE the pan's centre of mass is a
+   * pendulum, and a pendulum cannot invert.
+   */
+  addSphericalJoint(spec: SphericalJointSpec): JointHandle {
+    const a = this.#must(spec.bodyA);
+    const b = this.#must(spec.bodyB);
+    const jd = RAPIER.JointData.spherical(spec.anchorA, spec.anchorB);
+    const joint = this.#world.createImpulseJoint(jd, a.body, b.body, true);
+    return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
+  }
+
+  /** Welds two bodies. Their current relative pose becomes the constraint. */
+  addFixedJoint(spec: SphericalJointSpec): JointHandle {
+    const a = this.#must(spec.bodyA);
+    const b = this.#must(spec.bodyB);
+    const jd = RAPIER.JointData.fixed(spec.anchorA, { x: 0, y: 0, z: 0, w: 1 }, spec.anchorB, {
+      x: 0,
+      y: 0,
+      z: 0,
+      w: 1,
+    });
+    const joint = this.#world.createImpulseJoint(jd, a.body, b.body, true);
+    return this.#registerJoint(joint, spec.bodyA, spec.bodyB);
+  }
+
+  /**
+   * Drives a revolute joint toward a target angle with a spring/damper.
+   *
+   * The Weigh Station uses it for ONE thing: holding a balance pan level as the beam
+   * tilts under it. That is a servo standing in for what a real hanging pan does by
+   * gravity, and it is deliberately NOT used on the beam itself — a motor there would let
+   * the instrument choose its own reading, which 15 §6.2 forbids outright.
+   */
+  configureRevoluteMotor(
+    h: JointHandle,
+    targetRad: number,
+    stiffness: number,
+    damping: number,
+  ): void {
+    const rec = this.#joints.get(h);
+    if (!rec) return;
+    (rec.joint as RAPIER.RevoluteImpulseJoint).configureMotorPosition(
+      targetRad,
+      stiffness,
+      damping,
+    );
+  }
+
   removeJoint(h: JointHandle): void {
     const rec = this.#joints.get(h);
     if (!rec) return;
@@ -509,6 +568,64 @@ export class PhysicsWorld {
     this.#recs.delete(h);
     this.#forced.delete(h);
     this.#world.removeRigidBody(rec.body); // removes its colliders too
+  }
+
+  /**
+   * Rapier 0.19.3 reports a resting contact's impulse at `(1 + 1/N)` times the true
+   * value, where N is `numSolverIterations`.
+   *
+   * Measured, not inferred: a cube on a plate reports exactly 1.25x its weight at N = 4,
+   * 1.125x at N = 8 and 1.0625x at N = 16, and the factor is unchanged by mass (0.2 kg
+   * to 20 kg), timestep (1/30 to 1/120), penetration tolerance, prediction distance, or
+   * the soft-contact frequency and damping. It is the accumulated impulse across the
+   * solver's iterations counting one extra pass, and it holds to four places.
+   *
+   * Every sustained-force read goes through here, so the instruments see newtons. The
+   * law is pinned by `tests/physics/contact-force.test.ts`; if a Rapier upgrade changes
+   * it, that test is the first thing to fail — rather than a balance quietly reading a
+   * kilo cube as 1.25 kg, which is what it did from W0 until this was measured.
+   */
+  #reportedToTrue(impulse: number): number {
+    return impulse / (1 + 1 / this.#world.numSolverIterations);
+  }
+
+  /**
+   * Where a kinematic body should be after the NEXT step. Rapier derives the body's
+   * velocity from consecutive targets, so a dynamic body resting on it is carried along
+   * with the right contact velocity rather than teleported through.
+   */
+  setKinematicTarget(h: BodyHandle, p: Vec3, q: Quat): void {
+    const rec = this.#recs.get(h);
+    if (!rec) return;
+    rec.body.setNextKinematicTranslation(p);
+    rec.body.setNextKinematicRotation(q);
+  }
+
+  /**
+   * Contact force on a body projected onto one axis, in newtons — the load a pan is
+   * actually carrying, as opposed to `contactForceN`'s scalar sum.
+   *
+   * Each manifold's impulse is taken along its own normal, so a cube resting flat on a
+   * level pan counts in full while one leaning sideways against the rim counts for only
+   * the vertical share of what it pushes with. The sign of the normal is not stable
+   * between the two colliders of a pair, so the projection is taken as a magnitude.
+   */
+  contactForceAlongN(h: BodyHandle, axis: Vec3): number {
+    const rec = this.#recs.get(h);
+    if (!rec) return 0;
+    let impulse = 0;
+    for (const c of rec.colliders) {
+      this.#world.contactPairsWith(c, (other) => {
+        this.#world.contactPair(c, other, (manifold) => {
+          const n = manifold.normal();
+          const along = Math.abs(n.x * axis.x + n.y * axis.y + n.z * axis.z);
+          for (let i = 0; i < manifold.numContacts(); i++) {
+            impulse += manifold.contactImpulse(i) * along;
+          }
+        });
+      });
+    }
+    return this.#reportedToTrue(impulse) / this.#world.timestep;
   }
 
   /** Whether a handle still names a live body — the safe check teardown needs. */
@@ -829,7 +946,7 @@ export class PhysicsWorld {
         });
       });
     }
-    return impulse / this.#world.timestep;
+    return this.#reportedToTrue(impulse) / this.#world.timestep;
   }
 
   // ---- the step ---------------------------------------------------------------

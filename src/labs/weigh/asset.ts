@@ -15,13 +15,19 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
  */
 
 export type BalancePartId = 'stand' | 'beam' | 'leftPan' | 'rightPan';
+export type ScalePartId = 'housing' | 'platter';
 
 export interface BalanceAsset {
   /** Each part's geometry, already posed so its origin IS the physics body's origin. */
   parts: Record<BalancePartId, THREE.Object3D>;
 }
 
+export interface ScaleAsset {
+  parts: Record<ScalePartId, THREE.Object3D>;
+}
+
 let cached: Promise<BalanceAsset> | null = null;
+let cachedScale: Promise<ScaleAsset> | null = null;
 
 export function loadBalanceAsset(): Promise<BalanceAsset> {
   cached ??= new Promise<BalanceAsset>((resolve, reject) => {
@@ -56,7 +62,42 @@ export function loadBalanceAsset(): Promise<BalanceAsset> {
   return cached;
 }
 
-/** Frees the cached asset. Tests only — the app keeps it for the session. */
+/**
+ * The prepared kitchen scale — `public/scale.glb`, from `tools/prepare-scale.py`.
+ *
+ * Two parts, split by node name rather than by geometry: this export was authored with
+ * real names, so `Scale` is the platter and everything else is the fixed housing.
+ */
+export function loadScaleAsset(): Promise<ScaleAsset> {
+  cachedScale ??= new Promise<ScaleAsset>((resolve, reject) => {
+    new GLTFLoader().load(
+      `${import.meta.env.BASE_URL}scale.glb`,
+      (gltf) => {
+        const parts: Partial<Record<ScalePartId, THREE.Object3D>> = {};
+        for (const child of [...gltf.scene.children]) {
+          child.traverse((o) => {
+            if (!(o instanceof THREE.Mesh)) return;
+            o.castShadow = true;
+            o.receiveShadow = true;
+          });
+          child.removeFromParent();
+          parts[child.name as ScalePartId] = child;
+        }
+        if (!parts.housing || !parts.platter) {
+          reject(new Error('scale.glb is missing housing or platter'));
+          return;
+        }
+        resolve({ parts: parts as Record<ScalePartId, THREE.Object3D> });
+      },
+      undefined,
+      (err) => reject(err instanceof Error ? err : new Error(String(err))),
+    );
+  });
+  return cachedScale;
+}
+
+/** Frees the cached assets. Tests only — the app keeps them for the session. */
 export function clearBalanceAssetCache(): void {
   cached = null;
+  cachedScale = null;
 }

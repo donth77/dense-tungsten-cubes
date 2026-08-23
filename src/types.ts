@@ -73,7 +73,15 @@ export interface ColliderPart {
 }
 
 export interface CompoundBodySpec {
-  kind: 'fixed' | 'dynamic';
+  /**
+   * `kinematic` is a body the CALLER positions each step and the solver treats as
+   * infinitely massive: it pushes dynamic bodies and is never pushed back. That is what
+   * makes it the right thing for a balance pan — a surface that must stay level under a
+   * load several times the instrument's own mass, which no joint at four solver
+   * iterations can hold (every one of five joint-based pan designs was measured pulling
+   * out of shape under a 4 in tungsten cube).
+   */
+  kind: 'fixed' | 'dynamic' | 'kinematic';
   at: Vec3;
   parts: readonly ColliderPart[];
   ccd?: boolean;
@@ -101,6 +109,13 @@ export interface PrismaticJointSpec {
   anchorB: Vec3;
   axis: Vec3;
   limitsM?: readonly [number, number];
+}
+
+export interface SphericalJointSpec {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  anchorA: Vec3;
+  anchorB: Vec3;
 }
 
 export interface RopeJointSpec {

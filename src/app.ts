@@ -94,9 +94,10 @@ export class App implements Stepper {
       onSpawn: () => this.spawn(),
       onSpecChange: (spec) => this.#onSpecChange(spec),
       onResetView: () => this.rig.reset(this.spec.sideM),
-      onLabChange: (lab) => void this.labs.switchTo(lab),
+      onLabChange: (lab) => void this.#switchLab(lab),
       onHandMode: (mode) => this.hand.setMode(mode),
       onDeleteSelected: () => this.deleteSelected(),
+      onViewportOffset: (o) => this.rig.setViewportOffset(o.x, o.y),
     });
 
     // The tab follows the lab that actually mounted, not the one that was clicked: a
@@ -114,8 +115,15 @@ export class App implements Stepper {
         }
       }),
       // The camera has to know about the UI, or a selected cube sits behind the sheet
-      // (12 §3). The layout class is the single source both read.
-      this.hud.layout.subscribe((s) => this.rig.setViewportOffset(s.offset.x, s.offset.y)),
+      // (12 §3). The HUD measures what it covers and reports through onViewportOffset;
+      // this subscription only keeps the landscape/tablet cases current on resize.
+      this.hud.layout.subscribe((s) => {
+        // Phone layouts are measured by the HUD (onViewportOffset); the rest are fixed.
+        if (s.layout === 'tablet' || s.layout === 'desktop') {
+          this.rig.setViewportOffset(s.offset.x, s.offset.y);
+        }
+        this.rig.refit();
+      }),
     );
 
     this.labs = new LabManager({
@@ -124,7 +132,8 @@ export class App implements Stepper {
       render: this.render,
       scene: this.render.scene,
       bus: this.bus,
-      camera: { frameRadius: (r) => this.rig.frameRadius(r) },
+      camera: { frameRadius: (r, opts) => this.rig.frameRadius(r, opts) },
+      units: () => this.settings.units,
       ui: {
         setControls: (label, controls) => this.hud.setLabControls(label, controls),
         toast: (m) => this.hud.toast(m),
@@ -325,6 +334,30 @@ export class App implements Stepper {
     }
     // Nowhere clear: stage it above the tray rather than inside whatever is there.
     return { x: tray.x, y: tray.y + sideM * 2, z: tray.z };
+  }
+
+  /**
+   * A lab switch starts from an EMPTY field.
+   *
+   * 08 §9 had cubes persist across labs as "the player's tray", and that is what shipped
+   * first. It does not survive contact with instruments: a cube sitting on the balance's
+   * pan has the balance torn down from under it and drops 40 cm to the floor; a cube on a
+   * Sandbox mat does the same when the mat goes; and whatever is left standing where the
+   * next lab mounts has to be shoved somewhere by that lab. Clearing is simpler, it is what
+   * a person expects of a tab switch, and each lab has the same spawner anyway
+   * (user decision 2026-08-23).
+   */
+  async #switchLab(lab: 'sandbox' | 'weigh'): Promise<void> {
+    if (this.labs.activeId === lab) return;
+    this.hand.release('cancel');
+    this.#select(null);
+    this.entities.clear();
+    await this.labs.switchTo(lab);
+    // Give the new lab its first cube, the way boot does (08 §11 step 25: ten seconds to
+    // delight). Only if THIS switch is the one that landed — a quicker switch to a third
+    // lab may have won the race, and it spawns its own. Not on the 'lab-changed' event,
+    // which also fires for the boot mount and doubled up the boot cube.
+    if (this.labs.activeId === lab) this.spawn();
   }
 
   reset(): void {

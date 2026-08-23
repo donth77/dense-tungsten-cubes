@@ -67,14 +67,15 @@ export class WeighLab implements Lab {
   }
 
   /**
-   * The instrument mounts at the origin, and `config.stage.trayCentre` is ALSO the origin
-   * — so every cube the player brought from the Sandbox is standing exactly where the
-   * balance or the scale is about to appear. Player cubes deliberately survive a lab
-   * switch (08 §9); they just cannot survive it *inside the instrument*.
+   * Moves anything standing where the instrument is about to mount out to the staging
+   * row. A lab switch now arrives with an empty field (see `App.#switchLab`), so this is
+   * for the MODE switch inside the lab: Balance and Digital Scale share one spot, the
+   * cubes survive the swap, and whatever was on the balance's pan would otherwise be
+   * standing inside the scale's housing.
    *
-   * Found by hand, not by test: the rigs start with an empty world. In the real app the
-   * 2.4 kg boot cube sat under the platter holding it at rest height, and the scale read
-   * a flat zero with a kilo of tungsten on it.
+   * Found by hand, not by test, back when cubes did persist across labs: the 2.4 kg boot
+   * cube sat under the platter holding it at rest height, and the scale read a flat zero
+   * with a kilo of tungsten on it.
    *
    * 15 §5.1: deterministic, non-overlapping staging slots, never random scatter beside a
    * moving instrument.
@@ -107,12 +108,22 @@ export class WeighLab implements Lab {
     if (mode === 'balance') {
       this.#balance = new BalanceInstrument(this.#ctx);
       this.#balance.build();
-      // Frame the whole beam, not just the pivot.
-      this.#ctx.camera.frameRadius(config.weigh.balance.armM * 1.6);
+      // The WHOLE instrument, on every screen: it is 1.06 m wide and 0.78 m tall, and
+      // it is the subject. Radius is the half-diagonal of that box, centred on it.
+      const B = config.weigh.balance;
+      const halfW = B.armM + B.panRadiusM;
+      const top = B.pivotHeightM + 0.1;
+      this.#ctx.camera.frameRadius(Math.hypot(halfW, top / 2), {
+        fit: 'stage',
+        centreYM: top / 2,
+        margin: 1.1,
+      });
     } else {
       this.#scale = new ScaleInstrument(this.#ctx);
+      // The LCD shows whichever unit the player picked, without labs/ importing ui/.
+      this.#scale.units = (): 'si' | 'imperial' => this.#ctx.units();
       this.#scale.build();
-      this.#ctx.camera.frameRadius(config.weigh.scale.housingHalfM.z * 4);
+      this.#ctx.camera.frameRadius(config.weigh.scale.housingHalfM.z * 4, { fit: 'stage' });
     }
     this.#clearInstrumentVolume();
   }

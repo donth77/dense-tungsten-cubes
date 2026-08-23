@@ -25,6 +25,12 @@ export interface HudCallbacks extends SpawnerCallbacks {
   onLabChange(lab: 'sandbox' | 'weigh'): void;
   onHandMode(mode: HandModeId): void;
   onDeleteSelected(): void;
+  /**
+   * Where the camera should centre its framing, in CSS px off the viewport centre.
+   * Fires whenever the UI's coverage changes — layout class, sheet height, the info card
+   * appearing or going — so the camera follows the *free* area, not the canvas (12 §3).
+   */
+  onViewportOffset(offset: { x: number; y: number }): void;
 }
 
 export class Hud {
@@ -79,7 +85,7 @@ export class Hud {
     // Engraved / plain (03 §6). Engraved is the default — it is what the real cubes
     // look like, and it is what turns a size line-up into a periodic-table line-up.
     this.#engraveBtn = button('', () => this.settings.toggleEngraving(), {
-      class: 'iconbtn toggle',
+      class: 'iconbtn toggle engravebtn',
       'aria-label': 'Engraved face',
       title: 'Engraved face',
     });
@@ -94,7 +100,7 @@ export class Hud {
     this.#helpBtn.appendChild(icon('help'));
 
     this.#viewBtn = button('', () => this.cb.onResetView(), {
-      class: 'iconbtn',
+      class: 'iconbtn viewbtn',
       'aria-label': 'Reset the camera',
       title: 'Reset view  (F)',
     });
@@ -107,7 +113,7 @@ export class Hud {
      * tap cycles one/two hands, and a long press finds the 50 kN forklift.
      */
     this.#handBtn = button('350 N', () => this.#cycleHand(), {
-      class: 'iconbtn text',
+      class: 'iconbtn text gripbtn',
       'aria-label': 'Grip strength',
       title: 'Grip: one hand — 350 N  (G)',
     });
@@ -183,6 +189,10 @@ export class Hud {
     // Keep the info card clear of the sheet in portrait: the sheet's height is content-
     // driven, so it is measured rather than assumed.
     this.layout.subscribe(() => this.#syncSheetMetrics());
+    this.infocard.onVisibility = (on): void => {
+      this.appEl.classList.toggle('has-card', on);
+      this.#syncSheetMetrics();
+    };
     requestAnimationFrame(() => this.#syncSheetMetrics());
   }
 
@@ -258,6 +268,28 @@ export class Hud {
     const h = this.spawner.root.offsetHeight;
     this.appEl.style.setProperty('--dock-height', `${h}px`);
     this.appEl.style.setProperty('--infocard-bottom', `${h + 12}px`);
+
+    /*
+     * Camera offset from MEASURED coverage, not a fixed fraction. 12 §3's "about a sixth
+     * of the height" is the sheet alone; with the info card stacked on it the free area
+     * on a 390 x 844 phone shrinks from 493 px to under 300, and a cube framed for the
+     * sheet alone sits behind the card. Half the covered height is where the free area's
+     * centre actually is. Other layouts keep the layout manager's own answer.
+     */
+    const { layout, offset: base } = this.layout.state;
+    const cardOn = this.infocard.isVisible;
+    if (layout === 'phone-portrait') {
+      const card = cardOn ? this.infocard.root.offsetHeight + 12 : 0;
+      this.cb.onViewportOffset({ x: 0, y: (h + card) / 2 });
+    } else if (layout === 'phone-landscape') {
+      // The rail is on the right and the card sits against it, so together they cover
+      // the right side; the free area's centre is half that coverage left of centre.
+      const rail = this.spawner.root.offsetWidth;
+      const card = cardOn ? this.infocard.root.offsetWidth + 12 : 0;
+      this.cb.onViewportOffset({ x: (rail + card) / 2, y: 0 });
+    } else {
+      this.cb.onViewportOffset(base);
+    }
   }
 
   /**

@@ -43,6 +43,18 @@ describe('mass — SI primary, imperial subtitle (08 §2.3)', () => {
     expect(imp.secondary).toBe(si.primary);
   });
 
+  it('massFixed never prints a minus sign on nothing', () => {
+    // A zeroed scale's net reading sits a few thousandths either side of zero.
+    expect(massFixed(-0.002).primary).toBe('0.00 kg');
+    expect(massFixed(-0.002).secondary).toBe('0.00 lb');
+    // -0.003 kg IS -0.0066 lb, which rounds to a real -0.01 lb; the sign is earned there.
+    expect(massFixed(-0.003).secondary).toBe('-0.01 lb');
+    expect(massFixed(-0).primary).toBe('0.00 kg');
+    expect(massFixed(0.004, 2, 'imperial').primary).toBe('0.01 lb');
+    // ...but a real negative — a tared container lifted off — keeps its sign.
+    expect(massFixed(-0.5).primary).toBe('-0.50 kg');
+  });
+
   it('massFixed holds width so an instrument does not jitter', () => {
     // 02 §3: the scale reads two decimals, which is what lets the 1.5" cube show 1.00 kg
     // honestly (it computes to 0.9955).

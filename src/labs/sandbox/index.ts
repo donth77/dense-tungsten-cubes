@@ -58,7 +58,8 @@ export class SandboxLab implements Lab {
     this.#buildMats(ctx);
     this.#buildPanel(ctx);
     // Frame the mats and the staging strip, not a single cube.
-    ctx.camera.frameRadius(STAGE_RADIUS_M);
+    // The cube is the subject; the mats are scenery and may run off a phone's edges.
+    ctx.camera.frameRadius(STAGE_RADIUS_M, { fit: 'subject' });
   }
 
   #buildMats(ctx: LabContext): void {
