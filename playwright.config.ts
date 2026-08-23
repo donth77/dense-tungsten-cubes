@@ -8,7 +8,19 @@ import { defineConfig, devices } from '@playwright/test';
  * rather than the build. CI asserts no-crash and frames-advance; real numbers come from
  * a headed run on a real GPU and the per-milestone phone pass.
  */
-const PORT = Number(process.env['DENSE_PORT'] ?? 5199);
+/*
+ * 5181, and deliberately NOT the dev server's 5180.
+ *
+ * Two reasons, both learned the hard way. 5199 was already taken on this machine by an
+ * unrelated `python -m http.server`, and because `reuseExistingServer` only probes for a
+ * 200 it happily adopted it — all 56 tests then ran against somebody else's app and timed
+ * out waiting for `window.__dense`, which reads exactly like a catastrophic regression.
+ *
+ * And keeping it off the dev port means the suite always starts its own server instead of
+ * adopting whatever `pnpm dev` happens to be running. A dev server restarted or killed
+ * mid-run took smoke down with it more than once.
+ */
+const PORT = Number(process.env['DENSE_PORT'] ?? 5181);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
