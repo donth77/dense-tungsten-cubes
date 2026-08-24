@@ -160,7 +160,12 @@ export interface ImpactEvent {
    * it is data only — it never authorises an impact by itself, and it is not a stress.
    */
   forceN: number;
-  /** Solver contacts in the manifold. >1 means `point` is one of several (14 PHY-06). */
+  /**
+   * Solver contacts in the manifold. >1 means `point` is one of several (14 PHY-06).
+   * 0 means the pair had already separated when the event was drained — a CCD/TOI
+   * landing — and `point`/`normal` are a geometric projection, not a solver contact;
+   * `forceN` reads 0 on such a step. Speed and energy are snapshot-based as always.
+   */
   contactCount: number;
 }
 

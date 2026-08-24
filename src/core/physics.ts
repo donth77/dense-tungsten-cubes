@@ -1125,7 +1125,16 @@ export class PhysicsWorld {
       // those differ, and querying the wrong pair returns a manifold that never existed.
       const c1 = this.#world.getCollider(ev.collider1());
       const c2 = this.#world.getCollider(ev.collider2());
-      const contact = c1 && c2 ? this.#deepestContact(c1, c2) : null;
+      let contact = c1 && c2 ? this.#deepestContact(c1, c2) : null;
+      /*
+       * No manifold does NOT mean no impact. A CCD-resolved landing — the Drop Tower's
+       * 20 m drop, or any hard throw — is clamped to its time of impact, bounces, and
+       * has SEPARATED again by the time the event queue is drained: the force event
+       * arrives (with a 0 N magnitude, measured), and the manifold query finds nothing.
+       * Bailing here silently ate exactly the hardest impacts in the app (D0 spike,
+       * 2026-08-23). Synthesise the contact geometrically instead.
+       */
+      if (!contact && c1 && c2) contact = this.#toiContact(a, b, c1, c2);
       if (!contact) return;
 
       // Orient the normal from A toward B ourselves rather than trusting the manifold's
@@ -1184,10 +1193,21 @@ export class PhysicsWorld {
       // it silently swallowed real rapid rebounds for every other consumer. It now lives
       // in `fx/audio.ts` (14 PHY-06).
 
-      // Report the dynamic body as `a`; a static partner reports as its SurfaceId.
+      /*
+       * Report the dynamic body as `a`; a static partner reports as its SurfaceId.
+       * When BOTH are dynamic — a cube landing on a compliant instrument pad — prefer
+       * the one WITH an entityId: the player's cube is the subject of the sentence and
+       * the anonymous instrument body is the thing it hit. Before this rule the order
+       * was whatever Rapier listed first, and the Drop spike's "first impact of MY
+       * cube" query missed its own marquee landing because the pad had taken `a` as -1
+       * (D0, 2026-08-23). Magnitudes are unaffected; only the labels swap.
+       */
       const aIsDyn = a.body.isDynamic();
-      const primary = aIsDyn ? a : b;
-      const partner = aIsDyn ? b : a;
+      const bIsDyn = b.body.isDynamic();
+      const aPrimary =
+        aIsDyn && bIsDyn ? a.entityId !== undefined || b.entityId === undefined : aIsDyn;
+      const primary = aPrimary ? a : b;
+      const partner = aPrimary ? b : a;
       out.push({
         a: primary.entityId ?? -1,
         b: partner.surface ?? partner.entityId ?? -1,
@@ -1235,6 +1255,42 @@ export class PhysicsWorld {
     });
     if (best) (best as { count: number }).count = total;
     return best;
+  }
+
+  /**
+   * Contact for a pair that has already separated when drained — a CCD/TOI landing.
+   *
+   * The dynamic body's PRE-step centre of mass is projected onto the partner's
+   * collider: for a face landing on a plate that is the impact point and the surface
+   * normal, exactly. The caller's own orientation pass then points the normal A -> B,
+   * and the speed/energy math runs on the same pre-step snapshots as every other
+   * impact. `count` is 0 so consumers can tell a synthesised contact from a solver
+   * manifold; the event's `forceN` rides along unchanged (0 for a TOI step).
+   */
+  #toiContact(
+    a: Rec,
+    b: Rec,
+    c1: RAPIER.Collider,
+    c2: RAPIER.Collider,
+  ): { point: Vec3; normal: Vec3; count: number } | null {
+    const [moving, otherCol] = a.body.isDynamic() ? [a, c2] : [b, c1];
+    const com = moving.prevCom;
+    const proj = otherCol.projectPoint(com, true);
+    if (!proj) return null;
+    const point = { x: proj.point.x, y: proj.point.y, z: proj.point.z };
+    let nx = com.x - point.x;
+    let ny = com.y - point.y;
+    let nz = com.z - point.z;
+    let len = Math.hypot(nx, ny, nz);
+    if (len < 1e-9) {
+      // Projected from inside the partner: fall back to the line between the bodies.
+      nx = b.prevCom.x - a.prevCom.x;
+      ny = b.prevCom.y - a.prevCom.y;
+      nz = b.prevCom.z - a.prevCom.z;
+      len = Math.hypot(nx, ny, nz);
+      if (len < 1e-9) return null;
+    }
+    return { point, normal: { x: nx / len, y: ny / len, z: nz / len }, count: 0 };
   }
 
   /**
