@@ -7,7 +7,7 @@ import { ScaleInstrument } from '../../src/labs/weigh/scale.ts';
 import type { LabContext } from '../../src/labs/lab.ts';
 import type { Entity } from '../../src/core/entities.ts';
 import type { BodyHandle, CubeSpec, MetalId } from '../../src/types.ts';
-import { cubeMassKg } from '../../src/data/metals.ts';
+import { cubeMassKg, densityOf } from '../../src/data/metals.ts';
 import { DT, IN } from './harness.ts';
 
 /**
@@ -58,12 +58,27 @@ class Rig {
   }
 
   /** Places a real cube and registers it as an entity, as the app would. */
-  addCube(metal: MetalId, sideIn: number, at: { x: number; y: number; z: number }): Entity {
-    const spec: CubeSpec = { metal, sideM: sideIn * IN, purityPctW: 95 };
+  addCube(
+    metal: MetalId,
+    sideIn: number,
+    at: { x: number; y: number; z: number },
+    purityPctW = 95,
+  ): Entity {
+    const spec: CubeSpec = { metal, sideM: sideIn * IN, purityPctW };
     const body = this.pw.addCube(spec, at);
     const e = fakeEntity(this.pw, body, spec, this.pw.massOf(body));
     this.entities.push(e);
     return e;
+  }
+
+  /**
+   * Retunes a cube in place, the way `EntityStore.setPurity` does when the slider moves:
+   * a new density on the same body, and the entity's cached mass follows it.
+   */
+  setPurity(e: Entity, purityPctW: number): void {
+    e.spec = { ...e.spec, purityPctW };
+    this.pw.setDensity(e.body, densityOf('W', purityPctW));
+    e.massKg = this.pw.massOf(e.body);
   }
 
   /** One fixed step through the whole instrument contract, plus entity bookkeeping. */
@@ -136,6 +151,51 @@ describe('the digital scale', () => {
     rig.run(scale, 5);
     expect(scale.state.status).toBe('stable');
     expect(scale.state.stableMassKg).toBeCloseTo(cubeMassKg('W', 1.5 * IN, 95), 2);
+    rig.pw.free();
+  });
+
+  it('weighs the W90 kilo cube at 0.94 kg — purity is a real six per cent', async () => {
+    // 15 §16: W95 reads 1.00 kg and W90 reads 0.94 kg. The whole purity slider rests on
+    // the scale being able to show that difference, not just the headline number.
+    const { rig, scale } = await scaleRig();
+    rig.addCube('W', 1.5, { x: 0, y: scale.platterTopY + 0.03, z: 0 }, 90);
+    rig.run(scale, 5);
+    expect(scale.state.status).toBe('stable');
+    expect(scale.state.stableMassKg).toBeCloseTo(0.94, 2);
+    rig.pw.free();
+  });
+
+  it('tracks the purity slider live on a cube already sitting on the platter', async () => {
+    /*
+     * 08 §15's literal MVP gate: "kilo cube reads 1.00 kg; purity slider moves the reading
+     * live". The cube is not re-spawned when the slider moves — it is retuned in place
+     * (08 §9.2) — so the reading has to follow a body whose mass changed under a platter
+     * that never saw it land. A 5 % step is ~0.5 N on a 10 N load, comfortably past the
+     * stability span, so the signal drops to SETTLING and re-stabilises on the new value;
+     * a 1 % step (~0.1 N) sits right at the span, which is why `stableMassKg` is recomputed
+     * every sample rather than latched when stability is first reached.
+     */
+    const { rig, scale } = await scaleRig();
+    const cube = rig.addCube('W', 1.5, { x: 0, y: scale.platterTopY + 0.03, z: 0 });
+    rig.run(scale, 5);
+    expect(scale.state.stableMassKg).toBeCloseTo(1.0, 2);
+
+    rig.setPurity(cube, 90);
+    rig.run(scale, 4);
+    expect(scale.state.status).toBe('stable');
+    expect(scale.state.stableMassKg).toBeCloseTo(0.94, 2);
+
+    // And back, one grade at a time: 91 is within a division of 90, so this is the
+    // sub-span drift case — the reading must still move.
+    rig.setPurity(cube, 91);
+    rig.run(scale, 4);
+    expect(scale.state.status).toBe('stable');
+    expect(scale.state.stableMassKg).toBeCloseTo(cubeMassKg('W', 1.5 * IN, 91), 2);
+
+    rig.setPurity(cube, 95);
+    rig.run(scale, 4);
+    expect(scale.state.status).toBe('stable');
+    expect(scale.state.stableMassKg).toBeCloseTo(1.0, 2);
     rig.pw.free();
   });
 
@@ -217,6 +277,22 @@ describe('the digital scale', () => {
     }
     expect(scale.state.filteredCellForceN).toBeLessThan(loaded - lift * 0.5);
     rig.pw.free();
+  });
+
+  it('leaves nothing behind when torn down', async () => {
+    const pw = await PhysicsWorld.create();
+    const rig = new Rig(pw);
+    const before = { bodies: pw.bodyCount, joints: pw.jointCount };
+    const scale = new ScaleInstrument(rig.ctx);
+    scale.build();
+    // One prismatic at the platter, and nothing else.
+    expect(pw.jointCount).toBe(1);
+    expect(pw.bodyCount).toBeGreaterThan(before.bodies);
+    scale.teardown();
+    expect(pw.bodyCount).toBe(before.bodies);
+    expect(pw.jointCount).toBe(before.joints);
+    expect(rig.scene.children).toHaveLength(0);
+    pw.free();
   });
 
   it('reads the same from the centre and from near a corner', async () => {
@@ -347,6 +423,27 @@ describe('the equal-arm balance', () => {
     expect(bal.state.angleDeg).toBeLessThan(-0.5);
     expect(Math.abs(bal.state.angleDeg)).toBeLessThan(config.weigh.balance.limitDeg);
     // Every cube still on the instrument, not on the floor.
+    expect([...rig.entities].filter((e) => e.curr.p.y < 0.2)).toHaveLength(0);
+    rig.pw.free();
+  });
+
+  it('and six aluminium do not: the tungsten side goes down', async () => {
+    /*
+     * The other half of 15 §16's pair. One 2 in W95 cube (2.36 kg) against six 2 in
+     * aluminium cubes (2.12 kg) — the tungsten is 11 % heavier, so ITS side goes down.
+     * With the seven-cube test above this brackets the ideal 6.67 : 1 ratio the lab's
+     * copy will quote: six is too few, seven is too many.
+     */
+    const { rig, bal } = await balanceRig();
+    place(rig, -1, 'W', 2, 1);
+    place(rig, 1, 'Al', 2, 6);
+    rig.run(bal, 15);
+
+    expect(Number.isFinite(bal.state.angleDeg)).toBe(true);
+    // Positive is left-down, and the tungsten is on the left.
+    expect(bal.state.angleDeg).toBeGreaterThan(0.5);
+    expect(Math.abs(bal.state.angleDeg)).toBeLessThan(config.weigh.balance.limitDeg);
+    expect(['left-heavy', 'at-stop']).toContain(bal.state.status);
     expect([...rig.entities].filter((e) => e.curr.p.y < 0.2)).toHaveLength(0);
     rig.pw.free();
   });
