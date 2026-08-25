@@ -34,7 +34,8 @@ export type VoiceId =
   | 'boing_trampoline'
   | 'clack_hook'
   | 'tinkle_glass'
-  | 'splat_melon';
+  | 'splat_melon'
+  | 'crunch_can';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -51,6 +52,14 @@ export interface VoiceRecipe {
   /** Optional low-frequency body thump under everything. */
   thump?: number;
   thumpHz?: number;
+  /**
+   * Optional crumple crackle (Farnell, *Designing Sound*): a crumple is not one
+   * noise burst but a POISSON TRAIN of discrete micro-buckling clicks with
+   * power-law amplitudes. `crackle` is the click count over `crackleSpanS`,
+   * front-loaded the way a crush starts dense and peters out.
+   */
+  crackle?: number;
+  crackleSpanS?: number;
 }
 
 /**
@@ -256,6 +265,22 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
     thump: 0.5,
     thumpHz: 85,
   },
+  /* Thin aluminium giving way (18 §6 C2): a Poisson crackle of micro-buckling
+   * clicks over a modest metallic body — the Farnell crumple model, not a noise
+   * burst. The dent plays the same voice quieter; the flatten gets full gain. */
+  crunch_can: {
+    freq: 480,
+    partials: [1, 1.62, 2.41, 3.55],
+    decayS: 0.12,
+    noise: 0.45,
+    noiseHz: 2400,
+    noiseDecayS: 0.09,
+    noiseQ: 0.9,
+    thump: 0.18,
+    thumpHz: 140,
+    crackle: 26,
+    crackleSpanS: 0.16,
+  },
 };
 
 const METAL_VOICE: Record<MetalId, VoiceId> = {
@@ -285,6 +310,18 @@ export class AudioBus {
   #live = new Map<VoiceId, AudioBufferSourceNode[]>();
   #muted = false;
   #unlocking = false;
+  /** Diagnostics for `__dense.audio()` — why a hit did or did not make a sound. */
+  readonly #stats = {
+    impacts: 0,
+    played: 0,
+    cooled: 0,
+    noVoice: 0,
+    tooQuiet: 0,
+    stolen: 0,
+    resumes: 0,
+    /** Non-running states seen since boot — an interruption leaves a trail here. */
+    seen: '' as string,
+  };
   /** `a|b` -> `performance.now()` of the last thud played for that pair. See `#onImpact`. */
   #pairCooldown = new Map<string, number>();
 
@@ -325,14 +362,65 @@ export class AudioBus {
       await ctx.resume();
       this.#renderRemainingWhenIdle();
       document.addEventListener('visibilitychange', this.#onVisibility);
+      // The context announces its own stalls; take them as the cue to restart.
+      ctx.addEventListener('statechange', this.#onStateChange);
     } finally {
       this.#unlocking = false;
     }
   }
 
   readonly #onVisibility = (): void => {
-    if (document.visibilityState === 'visible') void this.#ctx?.resume();
+    if (document.visibilityState === 'visible') this.#kick();
   };
+
+  /** The context stalled on its own (interruption, device change) — restart it. */
+  readonly #onStateChange = (): void => {
+    this.#kick();
+  };
+
+  /**
+   * Nudge a stalled context back to life.
+   *
+   * The ONE resume trigger used to be `visibilitychange`, which does not fire for the
+   * cases that actually stop the clock while the page stays visible: iOS marks the
+   * context `interrupted` for a call or a Siri activation, and a desktop browser can
+   * `suspend` one when another tab takes the audio focus or the output device changes.
+   * The context then never restarts, every later sound is scheduled into a stopped
+   * clock, and the app is silent with no visible cause — "audio randomly disabled"
+   * (user, 2026-08-25). So every play attempt checks the state and resumes.
+   */
+  #kick(): void {
+    const ctx = this.#ctx;
+    if (!ctx || ctx.state === 'running') return;
+    this.#stats.resumes++;
+    if (!this.#stats.seen.includes(ctx.state)) {
+      this.#stats.seen = this.#stats.seen ? `${this.#stats.seen},${ctx.state}` : ctx.state;
+    }
+    void ctx.resume().catch(() => {
+      /* a resume outside a gesture can be refused; the next gesture retries */
+    });
+  }
+
+  /**
+   * Live diagnostics (debug facade only). `state` is the AudioContext's own — a
+   * browser may suspend it under us, which sounds exactly like the sound
+   * "randomly turning off".
+   */
+  get dbg(): Record<string, unknown> {
+    const live: Record<string, number> = {};
+    for (const [voice, list] of this.#live) if (list.length) live[voice] = list.length;
+    return {
+      state: this.#ctx?.state ?? 'none',
+      /** Non-running states seen since boot, and how often we restarted. */
+      stalls: this.#stats.seen || 'none',
+      muted: this.#muted,
+      masterGain: this.#master?.gain.value ?? null,
+      buffers: this.#buffers.size,
+      pairKeys: this.#pairCooldown.size,
+      live,
+      ...this.#stats,
+    };
+  }
 
   /**
    * A one-shot on demand — the first non-impact trigger (16 §10.5). Labs reach it
@@ -357,6 +445,7 @@ export class AudioBus {
 
   readonly #onImpact = (ev: ImpactEvent): void => {
     if (!this.#ctx || this.#muted) return;
+    this.#kick();
 
     /*
      * Per-pair debounce, so one landing is one thud rather than a machine-gun burst.
@@ -369,17 +458,27 @@ export class AudioBus {
     const key = pairKey(ev);
     const now = performance.now();
     const last = this.#pairCooldown.get(key);
-    if (last !== undefined && now - last < config.audio.pairCooldownMs) return;
+    this.#stats.impacts++;
+    if (last !== undefined && now - last < config.audio.pairCooldownMs) {
+      this.#stats.cooled++;
+      return;
+    }
     this.#pairCooldown.set(key, now);
 
     const voice = this.#pickVoice(ev);
-    if (!voice) return;
+    if (!voice) {
+      this.#stats.noVoice++;
+      return;
+    }
 
     // gain = clamp01((log10(E) + 2) / 3.5): 0.01 J whispers, 300 J is full scale.
     const gain = clamp01(
       (Math.log10(Math.max(ev.energyJ, 1e-6)) + config.audio.gainOffset) / config.audio.gainRange,
     );
-    if (gain <= 0.001) return;
+    if (gain <= 0.001) {
+      this.#stats.tooQuiet++;
+      return;
+    }
 
     const side = this.#sideHint(ev);
     // Small cubes ring higher. 2" is the reference pitch.
@@ -435,6 +534,7 @@ export class AudioBus {
     // Oldest-steals: a machine-gun of clangs is worse than a dropped one.
     while (list.length >= config.audio.polyphony) {
       const oldest = list.shift();
+      this.#stats.stolen++;
       try {
         oldest?.stop();
       } catch {
@@ -451,8 +551,16 @@ export class AudioBus {
     src.onended = () => {
       const i = list.indexOf(src);
       if (i >= 0) list.splice(i, 1);
+      // Let the graph shrink: an orphan gain per hit adds up over a long session.
+      try {
+        src.disconnect();
+        g.disconnect();
+      } catch {
+        /* already torn down */
+      }
     };
     src.start();
+    this.#stats.played++;
     list.push(src);
     this.#live.set(voice, list);
   }
@@ -520,6 +628,7 @@ export class AudioBus {
 
   dispose(): void {
     document.removeEventListener('visibilitychange', this.#onVisibility);
+    this.#ctx?.removeEventListener('statechange', this.#onStateChange);
     this.bus.off('impact', this.#onImpact);
     this.#pairCooldown.clear();
     this.#hints.clear();
@@ -593,6 +702,23 @@ export function synthVoice(r: VoiceRecipe, sampleRate: number): Float32Array {
     // 1.5 ms attack ramp: without it every hit starts with a click from the step edge.
     const attack = Math.min(1, t / 0.0015);
     out[i] = s * attack * 0.42;
+  }
+
+  if (r.crackle) {
+    // Micro-buckling clicks: each a millisecond ring at its own frequency. The
+    // train, not the tone, is what reads as "crinkle".
+    const span = r.crackleSpanS ?? 0.15;
+    for (let k = 0; k < r.crackle; k++) {
+      const start = Math.floor(Math.pow(Math.random(), 0.8) * span * sr);
+      const amp = 0.55 * Math.pow(Math.random(), 1.7) + 0.08;
+      const fc = 1800 + 2600 * Math.random();
+      const phase = Math.random() * Math.PI * 2;
+      const dur = Math.floor(0.006 * sr);
+      for (let j = 0; j < dur && start + j < n; j++) {
+        const tt = j / sr;
+        out[start + j]! += amp * Math.exp(-tt / 0.0016) * Math.sin(2 * Math.PI * fc * tt + phase);
+      }
+    }
   }
 
   // Normalise so the energy->gain curve is the only thing setting loudness.

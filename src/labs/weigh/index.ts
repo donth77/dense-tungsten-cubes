@@ -123,7 +123,20 @@ export class WeighLab implements Lab {
       // The LCD shows whichever unit the player picked, without labs/ importing ui/.
       this.#scale.units = (): 'si' | 'imperial' => this.#ctx.units();
       this.#scale.build();
-      this.#ctx.camera.frameRadius(config.weigh.scale.housingHalfM.z * 4, { fit: 'stage' });
+      /*
+       * The scale is the SUBJECT, so it fits by HEIGHT — the same call the Sandbox
+       * makes for a cube, and for the same reason (camera.ts's own note). Fitting
+       * the 0.84 m staging row across a portrait phone's 19-degree horizontal field
+       * put the camera 5.3 m from a 35 cm instrument and the LCD was unreadable
+       * (measured, user-caught 2026-08-25); the balance keeps 'stage' because it IS
+       * 1.06 m wide. Distance is now aspect-independent: ~1.3 m on every screen,
+       * with the staging row running off the sides on the narrowest ones.
+       */
+      this.#ctx.camera.frameRadius(0.4, {
+        fit: 'subject',
+        centreYM: config.weigh.scale.platterRestHeightM + 0.06,
+        margin: 1.15,
+      });
     }
     this.#clearInstrumentVolume();
   }

@@ -40,6 +40,8 @@ interface DenseDebug {
   /** The mounted lab, or null. `__dense.lab()?.scale?.state` reads the scale. */
   lab(): unknown;
   colliders(on: boolean): void;
+  /** Audio pipeline diagnostics — context state, polyphony, and per-hit outcomes. */
+  audio(): Record<string, unknown>;
   /** The M0 go/no-go (08 §11 step 8). */
   jitterTest(seconds?: number): Promise<JitterResult[]>;
   /** The extreme-size-ratio probe (08 §14). Expected to FAIL — see docs/14 PHY-03. */
@@ -75,6 +77,7 @@ export async function attachDebug(app: App): Promise<void> {
     // The active lab, for reading an instrument that has no HUD yet.
     lab: () => app.labs.active,
     colliders: (on) => overlay.setEnabled(on),
+    audio: () => app.audio.dbg,
     jitterTest: (seconds = 10) => jitterTest(app, seconds),
     massRatioTest: (seconds = 10, bigIn = 4) => massRatioTest(app, seconds, bigIn),
     envelopeTest: (seconds = 10, lowerIn = 1) => envelopeTest(app, seconds, lowerIn),

@@ -461,6 +461,89 @@ describe('C2 — the watermelon (18 §6)', () => {
  * These pins hold the two regimes apart on the SHIPPING fragment path — synthetic
  * fragments injected where GLTFLoader cannot run.
  */
+/**
+ * C2.3 — the soda can (18 §6): a 3-state MORPH, not a shatter. 02 §7's anchors:
+ * 1 J dents, 5 J flattens. The physics runs fully headless (the morph swap needs
+ * no GLB — only the visual does), so these pins exercise the shipping path.
+ */
+/** New dynamic prop bodies since `before` — burst pieces, morphed cans — with their field position. */
+function burstPieces(rig: Rig, before: ReadonlySet<number>): { r: number; y: number }[] {
+  const cubes = new Set([...rig.store.all].map((e) => e.body));
+  return [...rig.pw.allBodies()]
+    .filter((b) => !before.has(b) && !cubes.has(b) && rig.pw.bodyKindOf(b) === 'dynamic')
+    .map((b) => {
+      const t = rig.pw.transformOf(b);
+      return { r: Math.hypot(t.p.x, t.p.z), y: t.p.y };
+    });
+}
+
+describe('C2.3 — the soda can (18 §6)', () => {
+  it('the dent band: a light cube DENTS it, KNOCKS it away, and the can SURVIVES', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('soda-can');
+    rig.run(0.2);
+    const before = new Set(rig.pw.allBodies());
+    fullDrop(rig, 'W', 1, 0.6); // ~1.4 J at the shoulder — the dent band
+    rig.run(1.5);
+    expect(rig.lab.state!.verdict).toBe('survived');
+    expect(rig.lab.targetState.canState).toBe('dent');
+    expect(rig.lab.targetState.broken).toBe(false);
+    // The kick-out (realism review, 2026-08-25): a 15 g can never stays planted
+    // under a strike — it gets knocked out from under the cube…
+    const canBodies = burstPieces(rig, before);
+    expect(canBodies.length).toBe(1);
+    expect(canBodies[0]!.r, 'knocked away from centre').toBeGreaterThan(0.1);
+    expect(canBodies[0]!.r, 'but stays on stage').toBeLessThan(2.5);
+    // …so the cube lands on the PLATE, not perched on the can.
+    const cube = [...rig.store.all][0]!;
+    expect(cube.curr.p.y).toBeLessThan(0.06);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('the wreck is RECOVERED, never culled — an 8" cube cannot delete the can', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('soda-can');
+    rig.run(0.2);
+    const before = new Set(rig.pw.allBodies());
+    // The heaviest thing the size row can spawn, from height: whatever it does to a
+    // 15 g can, the can still has to exist afterwards (user: "should not disappear ever").
+    fullDrop(rig, 'W', 8, 6);
+    rig.run(3);
+    const wreck = burstPieces(rig, before);
+    expect(wreck.length, 'the can still exists').toBe(1);
+    expect(wreck[0]!.r, 'and it is on the stage, not in the void').toBeLessThan(
+      config.stage.floorHalfSizeM,
+    );
+    expect(wreck[0]!.y, 'above the floor, not under it').toBeGreaterThan(-0.1);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('a heavy drop CRUSHES FLAT: verdict stamped, wreckage body swapped not multiplied', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('soda-can');
+    rig.run(0.2);
+    const deployed = rig.pw.bodyCount;
+    fullDrop(rig, 'W', 2, 2); // ~44 J — far past the 5 J flatten
+    rig.run(0.2);
+    expect(rig.lab.state!.verdict).toBe('crushed-flat');
+    expect(rig.lab.targetState.canState).toBe('flat');
+    // The wreck SKITTERS out from under the cube (the buckle-ramp kick-out) and
+    // the damped slide dies on stage.
+    rig.run(1.5);
+    const wreck = burstPieces(rig, new Set<number>()).filter((p) => p.y < 0.1);
+    expect(wreck.some((p) => p.r > 0.15 && p.r < 2.8)).toBe(true);
+    // The intact body left, the flat wreck arrived, the cube landed: net +1 —
+    // counted back at idle, once the carriage has returned its loading platform.
+    expect(rig.runUntil(() => rig.lab.towerPhase === 'idle', 12)).toBe(true);
+    rig.run(0.6);
+    expect(rig.pw.bodyCount).toBe(deployed + 1);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
 describe('C2.2 — burst regimes (18 §6, audit)', () => {
   /** A 3×2×2 grid of hull chunks standing in for the melon's 12 Voronoi pieces. */
   function syntheticMelonAssets(): CrushAssets {
@@ -481,19 +564,10 @@ describe('C2.2 — burst regimes (18 §6, audit)', () => {
       glass: new THREE.Group(),
       pedestal: new THREE.Group(),
       melonFull: new THREE.Group(),
+      can: new THREE.Group(),
       melonFrags: frags,
       glassFrags: [],
     };
-  }
-
-  function burstPieces(rig: Rig, before: ReadonlySet<number>): { r: number; y: number }[] {
-    const cubes = new Set([...rig.store.all].map((e) => e.body));
-    return [...rig.pw.allBodies()]
-      .filter((b) => !before.has(b) && !cubes.has(b) && rig.pw.bodyKindOf(b) === 'dynamic')
-      .map((b) => {
-        const t = rig.pw.transformOf(b);
-        return { r: Math.hypot(t.p.x, t.p.z), y: t.p.y };
-      });
   }
 
   it('just-over CRACKS OPEN in place: pieces sag around the crater, cube nests on the wreck', async () => {

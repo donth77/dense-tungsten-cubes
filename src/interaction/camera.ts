@@ -179,8 +179,15 @@ export class CameraRig {
      */
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
     const margin = radiusM * (opts.margin ?? 1.25);
-    const byHeight = margin / Math.tan(vFov / 2);
-    const byWidth = margin / Math.tan(hFov / 2);
+    /*
+     * Fit into the FREE area, not the whole frame. The panels cover the bottom of a
+     * phone (the split band is 36% of it), and the view offset only slides the
+     * subject up — it cannot shrink it, so a frame sized to the full viewport hid
+     * the carriage behind the band and cropped the mast off the top.
+     */
+    const usable = this.#usableFraction();
+    const byHeight = margin / (Math.tan(vFov / 2) * usable.y);
+    const byWidth = margin / (Math.tan(hFov / 2) * usable.x);
     const needed = fit === 'subject' ? byHeight : Math.max(byHeight, byWidth);
     this.#goal.distM = clamp(needed, config.camera.distMinM, config.camera.distMaxM);
     this.#goal.target.set(
@@ -204,6 +211,24 @@ export class CameraRig {
   setViewportOffset(xPx: number, yPx: number): void {
     this.#viewOffsetPx = { x: xPx, y: yPx };
     this.#applyViewOffset();
+    // The free area changed, so the fit did too: a frame computed against the WHOLE
+    // viewport puts half the rig behind the panels (phone drop mode, user 2026-08-25).
+    this.refit();
+  }
+
+  /**
+   * How much of the frame the panels leave free, per axis, as a 0..1 fraction. The
+   * HUD reports what it covers as a centring offset (coverage / 2), so the free
+   * span is the viewport minus twice that offset.
+   */
+  #usableFraction(): { x: number; y: number } {
+    const w = window.innerWidth || 1;
+    const h = window.innerHeight || 1;
+    const fx = (w - 2 * Math.abs(this.#viewOffsetPx.x)) / w;
+    const fy = (h - 2 * Math.abs(this.#viewOffsetPx.y)) / h;
+    // Never let a huge sheet drive the camera to the far clip; below ~40% free the
+    // layout itself is the thing to fix.
+    return { x: clamp(fx, 0.4, 1), y: clamp(fy, 0.4, 1) };
   }
 
   #applyViewOffset(): void {

@@ -66,6 +66,7 @@ let crush: Promise<{
   glass: THREE.Object3D;
   pedestal: THREE.Object3D;
   melon: THREE.Object3D;
+  can: THREE.Object3D;
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }> | null = null;
@@ -252,6 +253,12 @@ export interface CrushAssets {
   glass: THREE.Object3D;
   pedestal: THREE.Object3D;
   melonFull: THREE.Object3D;
+  /**
+   * The can carries its crush as MORPH TARGETS — influences [dent, flat] on its
+   * meshes; the rig animates them. Mesh.clone() gives each clone its own
+   * influence array, so states never leak between mounts.
+   */
+  can: THREE.Object3D;
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }
@@ -274,6 +281,7 @@ export function loadCrushAssets(): Promise<CrushAssets> {
       glass: a.glass.clone(),
       pedestal: a.pedestal.clone(),
       melonFull: a.melonFull.clone(),
+      can: a.can.clone(),
       melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
       glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     });
@@ -282,15 +290,17 @@ export function loadCrushAssets(): Promise<CrushAssets> {
     loadScene('wine-glass.glb'),
     loadScene('pedestal.glb'),
     loadScene('watermelon.glb'),
+    loadScene('soda-can.glb'),
     loadScene('melon-frags.glb'),
     loadScene('glass-frags.glb'),
-  ]).then(([glass, pedestal, melon, melonFragScene, glassFragScene]) => {
+  ]).then(([glass, pedestal, melon, can, melonFragScene, glassFragScene]) => {
     const glassSkin = skinOf(glass);
     const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
     return {
       glass,
       pedestal,
       melon,
+      can,
       melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
         makeFleshMaterial(node.position.clone()),
       ),
@@ -301,6 +311,7 @@ export function loadCrushAssets(): Promise<CrushAssets> {
     glass: a.glass.clone(),
     pedestal: a.pedestal.clone(),
     melonFull: melonPart(a.melon, /Full/),
+    can: a.can.clone(),
     melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
   }));

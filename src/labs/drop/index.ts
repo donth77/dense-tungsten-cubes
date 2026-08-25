@@ -228,11 +228,17 @@ export class DropLab implements Lab {
   }
 
   /** Debug/testing: the target's cycle state. */
-  get targetState(): { deployed: boolean; broken: boolean; wasHit: boolean } {
+  get targetState(): {
+    deployed: boolean;
+    broken: boolean;
+    wasHit: boolean;
+    canState: 'intact' | 'dent' | 'flat';
+  } {
     return {
       deployed: this.#targets.deployed,
       broken: this.#targets.broken,
       wasHit: this.#targets.wasHit,
+      canState: this.#targets.canState,
     };
   }
 

@@ -236,6 +236,13 @@ export class App implements Stepper {
         break;
       case 'toggleSound':
         this.settings.toggleSound();
+        /*
+         * Say it out loud. M is one keystroke, the setting PERSISTS, and the only
+         * feedback was a 24px icon in the top bar — so a stray press left the app
+         * silent across reloads with no visible cause, which is indistinguishable
+         * from broken audio (user report, 2026-08-25).
+         */
+        this.hud.toast(this.settings.sound ? 'Sound on (M)' : 'Sound off (M)', 1800);
         break;
       case 'toggleEngraving':
         this.settings.toggleEngraving();

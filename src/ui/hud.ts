@@ -293,8 +293,28 @@ export class Hud {
     const { layout, offset: base } = this.layout.state;
     const cardOn = this.infocard.isVisible;
     if (layout === 'phone-portrait') {
-      const card = cardOn ? this.infocard.root.offsetHeight + 12 : 0;
-      this.cb.onViewportOffset({ x: 0, y: (h + card) / 2 });
+      /*
+       * In the split band both halves are bottom-anchored, so the covered height is
+       * the TALLER of the two, not their sum — measuring the spawner alone framed
+       * the subject behind the rig half.
+       */
+      const split = this.appEl.classList.contains('split');
+      /*
+       * Both halves are bottom-anchored, so a taller one leaves the other's top edge
+       * ragged — "the two panels are not aligned at the same height" (user). Measure
+       * both at their NATURAL height, then pin both to the taller: reading
+       * offsetHeight while the pin is applied would ratchet and never shrink back.
+       */
+      if (split) {
+        this.appEl.style.removeProperty('--split-h');
+        const natural = Math.max(this.spawner.root.offsetHeight, this.labPanel.offsetHeight);
+        this.appEl.style.setProperty('--split-h', `${natural}px`);
+      } else {
+        this.appEl.style.removeProperty('--split-h');
+      }
+      const covered = split ? Math.max(h, this.labPanel.offsetHeight) : h;
+      const card = cardOn && !split ? this.infocard.root.offsetHeight + 12 : 0;
+      this.cb.onViewportOffset({ x: 0, y: (covered + card) / 2 });
     } else if (layout === 'phone-landscape') {
       // The rail is on the right and the card sits against it, so together they cover
       // the right side; the free area's centre is half that coverage left of centre.
@@ -314,11 +334,20 @@ export class Hud {
     this.#panelView?.dispose();
     this.#panelView = new LabPanel(this.labPanel);
     const handle = this.#panelView.mount(model);
+    /*
+     * A mounted instrument panel puts the phone into the SPLIT BAND (user direction,
+     * 2026-08-25): cubes bottom-left, the rig bottom-right, stage above both. Stacked
+     * they covered 89% of a 390x844 screen — measured before the change.
+     */
+    this.appEl.classList.add('split');
+    this.#syncSheetMetrics();
     return {
       update: (next) => handle.update(next),
       dispose: () => {
         handle.dispose();
         this.#panelView = null;
+        this.appEl.classList.remove('split');
+        this.#syncSheetMetrics();
       },
     };
   }

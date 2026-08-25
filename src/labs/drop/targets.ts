@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { config } from '../../config.ts';
 import { PropStore } from '../../core/props.ts';
 import { loadCrushAssets } from './asset.ts';
 import type { CrushAssets, FragChunk } from './asset.ts';
@@ -19,11 +20,12 @@ import type { BodyHandle, EntityId, ImpactEvent, SurfaceId, Transform, Vec3 } fr
  * loading/hoisting and a FRESH one rises once the winch is armed overhead.
  */
 
-export type TargetId = 'none' | 'wine-glass' | 'watermelon';
-export const TARGET_IDS: readonly TargetId[] = ['none', 'wine-glass', 'watermelon'];
+export type TargetId = 'none' | 'wine-glass' | 'soda-can' | 'watermelon';
+export const TARGET_IDS: readonly TargetId[] = ['none', 'wine-glass', 'soda-can', 'watermelon'];
 export const TARGET_LABELS: Readonly<Record<TargetId, string>> = {
   none: 'None',
   'wine-glass': 'Wine glass',
+  'soda-can': 'Soda can',
   watermelon: 'Watermelon',
 };
 
@@ -31,9 +33,9 @@ export const TARGET_LABELS: Readonly<Record<TargetId, string>> = {
 interface TargetSpec {
   thresholdJ: number;
   massKg: number;
-  verdict: 'shattered' | 'splat';
+  verdict: 'shattered' | 'splat' | 'crushed-flat';
   pedestal: boolean;
-  voice: 'tinkle_glass' | 'splat_melon';
+  voice: 'tinkle_glass' | 'splat_melon' | 'crunch_can';
 }
 export const TARGET_SPEC: Readonly<Record<Exclude<TargetId, 'none'>, TargetSpec>> = {
   'wine-glass': {
@@ -42,6 +44,14 @@ export const TARGET_SPEC: Readonly<Record<Exclude<TargetId, 'none'>, TargetSpec>
     verdict: 'shattered',
     pedestal: true,
     voice: 'tinkle_glass',
+  },
+  'soda-can': {
+    // 02 §7: 1 J dents, 5 J flattens (427–850 N buckling mapped at ~5 mm crush).
+    thresholdJ: 5,
+    massKg: 0.015,
+    verdict: 'crushed-flat',
+    pedestal: false,
+    voice: 'crunch_can',
   },
   watermelon: {
     thresholdJ: 40,
@@ -93,6 +103,18 @@ const GLASS_H = 0.195;
 const GS = 1.45;
 export const TARGET_TOP_M = PEDESTAL_TOP_M + GLASS_H;
 
+/*
+ * The can (18 §6 C2): a true 355 ml empty — 122 mm tall, Ø 64 mm, 15 g — with THREE
+ * authored states baked into the GLB. Dent telescopes the shoulder to 103 mm; the
+ * flat is 29 mm of accordion folds bulged to Ø 72. The dent band is [1, 5) J.
+ */
+const CAN_H = 0.122;
+const CAN_R = 0.032;
+const CAN_DENT_H = 0.103;
+const CAN_FLAT_H = 0.0293;
+const CAN_FLAT_R = 0.036;
+const CAN_DENT_MIN_J = 1;
+
 export class TargetRig {
   readonly #ctx: LabContext;
   readonly #props: PropStore;
@@ -115,6 +137,13 @@ export class TargetRig {
   #wasHit = false;
   #pendingBreakAt: Vec3 | null = null;
   #pendingKickJ = 0;
+  #canState: 'intact' | 'dent' | 'flat' = 'intact';
+  #pendingDent = false;
+  #pendingDentAt: Vec3 | null = null;
+  #pendingDentJ = 0;
+  #canHolder: THREE.Group | null = null;
+  #canMorphMeshes: THREE.Mesh[] = [];
+  #canMorphGoal: [number, number] = [0, 0];
 
   constructor(ctx: LabContext) {
     this.#ctx = ctx;
@@ -134,9 +163,12 @@ export class TargetRig {
   get wasHit(): boolean {
     return this.#wasHit;
   }
+  get canState(): 'intact' | 'dent' | 'flat' {
+    return this.#canState;
+  }
 
   /** The verdict this target's break earns (18 §5.4). */
-  get breakVerdict(): 'shattered' | 'splat' {
+  get breakVerdict(): 'shattered' | 'splat' | 'crushed-flat' {
     return this.#selected === 'none' ? 'shattered' : TARGET_SPEC[this.#selected].verdict;
   }
 
@@ -196,6 +228,18 @@ export class TargetRig {
       if (arrivalJ === null) continue;
       this.#wasHit = true;
       result = result ?? 'hit';
+      if (
+        this.#selected === 'soda-can' &&
+        this.#canState === 'intact' &&
+        arrivalJ >= CAN_DENT_MIN_J &&
+        arrivalJ < spec.thresholdJ
+      ) {
+        // The sub-threshold recipe (18 §5.2): the can dents. Queued like the
+        // break — no swap ever runs inside the event drain.
+        this.#pendingDent = true;
+        this.#pendingDentAt = { ...ev.point };
+        this.#pendingDentJ = arrivalJ - CAN_DENT_MIN_J;
+      }
       if (arrivalJ >= spec.thresholdJ) {
         this.#pendingBreakAt = { ...ev.point };
         this.#pendingKickJ = arrivalJ - spec.thresholdJ;
@@ -211,9 +255,25 @@ export class TargetRig {
 
   /** The queued swap (18 §5.2): one step after the hit, never inside the event drain. */
   beforePhysics(): void {
+    if (this.#pendingDent) {
+      this.#pendingDent = false;
+      // A same-step break outranks the dent.
+      if (this.#pendingBreakAt === null && this.#glass !== null && this.#canState === 'intact') {
+        this.#swapCanBody('dent', this.#pendingDentAt, this.#pendingDentJ);
+        this.#ctx.fx.play('crunch_can', 0.55);
+      }
+      this.#pendingDentAt = null;
+    }
     if (this.#pendingBreakAt === null || this.#glass === null) return;
     const at = this.#pendingBreakAt;
     this.#pendingBreakAt = null;
+    if (this.#selected === 'soda-can') {
+      // The can MORPHS instead of shattering (18 §5.3) — its visual lives on,
+      // animating to the flat state while the collider swaps under it.
+      this.#swapCanBody('flat', at, this.#pendingKickJ);
+      this.#ctx.fx.play('crunch_can', 1);
+      return;
+    }
     const v: Vec3 = { x: 0, y: 0, z: 0 };
     this.#ctx.physics.readVelocityInto(this.#glass, v);
     const t = this.#ctx.physics.transformOf(this.#glass);
@@ -231,18 +291,43 @@ export class TargetRig {
   }
 
   afterPhysics(): void {
-    // The entity kill-plane sweeps cubes, not props: an escaped shard is ours to cull.
-    for (let i = this.#shards.length - 1; i >= 0; i--) {
-      const b = this.#shards[i]!;
-      if (this.#ctx.physics.transformOf(b).p.y < -1) {
-        this.#removeBody(b);
-        this.#shards.splice(i, 1);
-      }
+    /*
+     * Wreckage is RECOVERED, never culled (user, 2026-08-25: "it should not
+     * disappear ever"). Capping the burst kick bounded the wreck's own flight, but
+     * the striking cube can always punt a 15 g can harder than any recipe — a 4″
+     * tungsten cube arrives with enough momentum to send it past the 3 m slab, and
+     * the world simply ends there. Physics is right and the stage is finite, so the
+     * compromise is at the boundary: anything that leaves the slab is set back down
+     * just inside it, at rest, rather than deleted. A player who looks for the can
+     * always finds it.
+     */
+    const pw = this.#ctx.physics;
+    const edge = config.stage.floorHalfSizeM - 0.25;
+    for (const b of this.#shards) {
+      const p = pw.transformOf(b).p;
+      const out = Math.abs(p.x) > edge || Math.abs(p.z) > edge;
+      if (!out && p.y > 0) continue;
+      pw.setTransform(
+        b,
+        {
+          x: Math.max(-edge, Math.min(edge, p.x)),
+          y: Math.max(0.06, p.y),
+          z: Math.max(-edge, Math.min(edge, p.z)),
+        },
+        true,
+      );
     }
     this.#props.capture();
   }
   render(alpha: number): void {
     this.#props.interpolate(alpha);
+    // The crush morph plays on the render clock (~90 ms to goal) — FX, not physics.
+    for (const m of this.#canMorphMeshes) {
+      const inf = m.morphTargetInfluences;
+      if (!inf) continue;
+      inf[0]! += (this.#canMorphGoal[0] - inf[0]!) * 0.3;
+      inf[1]! += (this.#canMorphGoal[1] - inf[1]!) * 0.3;
+    }
   }
 
   /** Remove every body and visual; selection is kept and syncPhase redeploys fresh. */
@@ -256,6 +341,12 @@ export class TargetRig {
     this.#broken = false;
     this.#wasHit = false;
     this.#pendingBreakAt = null;
+    this.#canState = 'intact';
+    this.#pendingDent = false;
+    this.#pendingDentAt = null;
+    this.#canHolder = null;
+    this.#canMorphMeshes = [];
+    this.#canMorphGoal = [0, 0];
     this.#group.clear();
   }
 
@@ -273,6 +364,10 @@ export class TargetRig {
     if (this.#selected === 'none' || this.#deployed) return;
     if (this.#selected === 'watermelon') {
       this.#deployMelon();
+      return;
+    }
+    if (this.#selected === 'soda-can') {
+      this.#deployCan();
       return;
     }
     this.#deployed = true;
@@ -517,6 +612,161 @@ export class TargetRig {
       );
     }
     void impactAt;
+  }
+
+  /** A true 355 ml empty on the plate (18 §6 C2) — the cheapest recipe in the set. */
+  #deployCan(): void {
+    this.#deployed = true;
+    this.#canState = 'intact';
+    this.#canMorphGoal = [0, 0];
+    const pw = this.#ctx.physics;
+    this.#glass = pw.addCompound({
+      kind: 'dynamic',
+      at: { x: 0, y: 0.02 + CAN_H / 2, z: 0 },
+      parts: [
+        {
+          shape: { kind: 'cylinder', halfHeightM: CAN_H / 2, radiusM: CAN_R },
+          material: 'steel',
+          massKg: TARGET_SPEC['soda-can'].massKg,
+        },
+      ],
+      entityId: GLASS_ID,
+      // 15 g: a heavy cube punts it across the stage — it must not tunnel mid-flight.
+      ccd: true,
+    });
+    this.#bodies.push(this.#glass);
+    const group = new THREE.Group();
+    this.#group.add(group);
+    this.#glassVisual = group;
+    this.#props.add(this.#glass, group);
+    const gen = ++this.#gen;
+    void loadCrushAssets()
+      .then((a) => {
+        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
+        this.#assetCache = a;
+        const holder = new THREE.Group();
+        a.can.position.y = -CAN_H / 2; // asset base sits at the body's bottom face
+        holder.add(a.can);
+        this.#canHolder = holder;
+        this.#canMorphMeshes = [];
+        a.can.traverse((o) => {
+          if (o instanceof THREE.Mesh && o.morphTargetInfluences) this.#canMorphMeshes.push(o);
+        });
+        this.#glassVisual.add(holder);
+      })
+      .catch(() => {
+        /* collider still works */
+      });
+  }
+
+  /**
+   * The can's state machine (02 §7: 1 J dents, ≥ 5 J flattens): swap the COLLIDER
+   * to the state's height while the morph targets animate the mesh through the
+   * crush — no pop, no shards. Bodies are born axis-aligned, so a toppled can's
+   * pose rides on the PART rotation and the visual holder's quaternion.
+   */
+  #swapCanBody(stage: 'dent' | 'flat', hitAt: Vec3 | null, excessJ: number): void {
+    if (this.#glass === null) return;
+    const pw = this.#ctx.physics;
+    const t = pw.transformOf(this.#glass);
+    const v: Vec3 = { x: 0, y: 0, z: 0 };
+    pw.readVelocityInto(this.#glass, v);
+    const prevH = this.#canState === 'dent' ? CAN_DENT_H : CAN_H;
+    const nextH = stage === 'dent' ? CAN_DENT_H : CAN_FLAT_H;
+    const nextR = stage === 'dent' ? CAN_R : CAN_FLAT_R;
+    // Upright cans crush toward the plate (the base stays put); toppled keep centre.
+    const upright = 1 - 2 * (t.q.x * t.q.x + t.q.z * t.q.z) > 0.9;
+    const y = upright ? t.p.y - prevH / 2 + nextH / 2 : t.p.y;
+    /*
+     * The buckle finishes in ~5 ms — under one step — and its fold displaces the
+     * wreck's centroid sideways as it crushes. At step scale the descending cube
+     * would close the trap before any authored velocity clears its footprint, so
+     * the swap is BORN displaced along the escape line; under a striker wider
+     * than the shift, depenetration pushes the same way and finishes the job.
+     */
+    const dxe = hitAt ? t.p.x - hitAt.x : 0;
+    const dze = hitAt ? t.p.z - hitAt.z : 0;
+    const re = Math.hypot(dxe, dze);
+    const seedE = (excessJ * 7.13) % (Math.PI * 2);
+    const ex = re > 0.004 ? dxe / re : Math.cos(seedE);
+    const ez = re > 0.004 ? dze / re : Math.sin(seedE);
+    const escapeM = 0.045;
+    const old = this.#glass;
+    this.#removeBody(old);
+    this.#bodies = this.#bodies.filter((b) => b !== old);
+    if (this.#glassVisual) {
+      this.#group.remove(this.#glassVisual);
+      this.#glassVisual = null;
+    }
+    const body = pw.addCompound({
+      kind: 'dynamic',
+      at: { x: t.p.x + ex * escapeM, y, z: t.p.z + ez * escapeM },
+      parts: [
+        {
+          shape: { kind: 'cylinder', halfHeightM: nextH / 2, radiusM: nextR },
+          rotation: t.q,
+          material: 'steel',
+          massKg: TARGET_SPEC['soda-can'].massKg,
+        },
+      ],
+      ...(stage === 'dent' ? { entityId: GLASS_ID } : {}),
+      ccd: true,
+      /*
+       * Damped so the skitter dies ON the stage. The first tuning let a 4″ cube's
+       * 370 J eject the wreck at the 5.5 m/s cap with only 0.8 damping — stop
+       * distance ~7 m off a 3 m slab, so the can sailed past the kill plane and
+       * the prop cull deleted it ("it literally disappeared", user 2026-08-25).
+       * A crushed can SHOULD fly a couple of metres; it must not leave the world.
+       */
+      linearDamping: stage === 'dent' ? 1.6 : 2.2,
+      angularDamping: 1.2,
+    });
+    /*
+     * The KICK-OUT (user, 2026-08-25: "wouldn't it be knocked around or flipped?
+     * it's literally fixed in one position"). A real crush is never symmetric:
+     * the Yoshimura buckle starts on one side and the folding interface becomes
+     * a ramp that squirts the can out from under the striker, spinning. A rigid
+     * cylinder pinned under a flat face has no escape the solver can find, so
+     * the ejection is authored — away from the hit point, faster for harder
+     * hits, tumbling; dead-centre hits break symmetry deterministically from the
+     * drop's own energy (no dice in the sim).
+     */
+    const dxk = hitAt ? t.p.x - hitAt.x : 0;
+    const dzk = hitAt ? t.p.z - hitAt.z : 0;
+    const rk = Math.hypot(dxk, dzk);
+    const seed = (excessJ * 7.13) % (Math.PI * 2);
+    const ux = rk > 0.004 ? dxk / rk : Math.cos(seed);
+    const uz = rk > 0.004 ? dzk / rk : Math.sin(seed);
+    const vOut =
+      stage === 'dent'
+        ? Math.min(2.6, 2 + 0.8 * Math.sqrt(Math.max(0, excessJ)))
+        : Math.min(3.2, 2.2 + 0.35 * Math.sqrt(Math.max(0, excessJ)));
+    const spin = vOut * 9;
+    pw.setVelocity(
+      body,
+      // Low loft: a crushed can skids, it does not get punted like a football.
+      { x: v.x + ux * vOut, y: v.y + 0.2 * vOut, z: v.z + uz * vOut },
+      { x: -uz * spin * 0.7, y: spin * 0.4, z: ux * spin * 0.7 },
+    );
+    const wrap = new THREE.Group();
+    if (this.#canHolder) {
+      this.#canHolder.quaternion.set(t.q.x, t.q.y, t.q.z, t.q.w);
+      const asset = this.#canHolder.children[0];
+      if (asset) asset.position.y = -nextH / 2;
+      wrap.add(this.#canHolder);
+    }
+    this.#group.add(wrap);
+    this.#props.add(body, wrap);
+    this.#canMorphGoal = stage === 'dent' ? [1, 0] : [0, 1];
+    this.#canState = stage;
+    if (stage === 'dent') {
+      this.#glass = body;
+      this.#bodies.push(body);
+      this.#glassVisual = wrap;
+    } else {
+      this.#glass = null;
+      this.#shards.push(body);
+    }
   }
 
   /** The hero on the plate (18 §6 C2): an 8 kg melon, no pedestal — it IS the show. */
