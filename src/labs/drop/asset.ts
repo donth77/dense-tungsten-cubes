@@ -62,6 +62,38 @@ export function loadTrampolineAsset(): Promise<TrampolineAsset> {
   return trampoline.then((a) => ({ frame: a.frame.clone(), mat: a.mat.clone() }));
 }
 
+let crush: Promise<{ glass: THREE.Object3D; pedestal: THREE.Object3D }> | null = null;
+
+function loadScene(file: string): Promise<THREE.Object3D> {
+  return new Promise((resolve, reject) => {
+    new GLTFLoader().load(
+      `${import.meta.env.BASE_URL}${file}`,
+      (gltf) => {
+        gltf.scene.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        resolve(gltf.scene);
+      },
+      undefined,
+      (err) => reject(err instanceof Error ? err : new Error(String(err))),
+    );
+  });
+}
+
+/**
+ * The crush targets' real models (18 §5.3; assets-lib is the curated source
+ * library). CLONES per call — the trampoline's cannibalised-cache lesson.
+ */
+export function loadCrushAssets(): Promise<{ glass: THREE.Object3D; pedestal: THREE.Object3D }> {
+  crush ??= Promise.all([loadScene('wine-glass.glb'), loadScene('pedestal.glb')]).then(
+    ([glass, pedestal]) => ({ glass, pedestal }),
+  );
+  return crush.then((a) => ({ glass: a.glass.clone(), pedestal: a.pedestal.clone() }));
+}
+
 /** Tests only — the app keeps the caches for the session. */
 export function clearDropAssetCache(): void {
   trampoline = null;

@@ -149,7 +149,7 @@ async function rigWithStage(): Promise<Rig> {
 function fullDrop(rig: Rig, metal: MetalId, sideIn: number, hM: number): void {
   rig.store.spawn(metal, sideIn, {
     x: 0,
-    y: config.drop.plate.topYM + (sideIn * IN) / 2 + 0.02,
+    y: rig.lab.platformY + (sideIn * IN) / 2 + 0.02,
     z: 0,
   });
   rig.run(0.5); // land and settle on the plate
@@ -169,7 +169,7 @@ function fullDrop(rig: Rig, metal: MetalId, sideIn: number, hM: number): void {
 describe('the Drop Tower, as shipped', () => {
   it('winches, arms, releases at exactly h with zero velocity, and reads an honest 2 m drop', async () => {
     const rig = await rigWithStage();
-    const e = rig.store.spawn('W', 2, { x: 0, y: config.drop.plate.topYM + IN + 0.02, z: 0 });
+    const e = rig.store.spawn('W', 2, { x: 0, y: rig.lab.platformY + IN + 0.02, z: 0 });
     rig.run(0.5);
     rig.lab.hoist();
     expect(rig.lab.towerPhase === 'loading' || rig.lab.towerPhase === 'hoisting').toBe(true);
@@ -188,19 +188,19 @@ describe('the Drop Tower, as shipped', () => {
     expect(st.impact!.vMps).toBeGreaterThan(ideal * 0.985);
     expect(st.impact!.vMps).toBeLessThan(ideal * 1.005);
     expect(st.impact!.energyJ).toBeCloseTo(0.5 * e.massKg * st.impact!.vMps ** 2, 6);
-    expect(st.impact!.partner).toBe('concrete');
-    expect(st.verdict).toBe('landed');
+    expect(st.impact!.partner).toBe('steel');
+    expect(st.verdict).toBe('rang'); // steel default since the 2026-08-25 floor reduction
     rig.pw.free();
   }, 120_000);
 
-  it('delivers the wow moment: 4" W from 10 m cracks the concrete at ~1.84 kJ', async () => {
+  it('delivers the wow moment: 4" W from 10 m rings the steel at ~1.84 kJ', async () => {
     const rig = await rigWithStage();
     fullDrop(rig, 'W', 4, 10);
     const st = rig.lab.state!;
     expect(st.impact!.energyJ).toBeGreaterThan(1800);
     expect(st.impact!.energyJ).toBeLessThan(1860);
     expect(st.impact!.tFlightS).toBeCloseTo(Math.sqrt((2 * 10) / G), 1);
-    expect(st.verdict).toBe('cracked');
+    expect(st.verdict).toBe('rang');
     rig.pw.free();
   }, 120_000);
 
@@ -254,7 +254,7 @@ describe('the Drop Tower, as shipped', () => {
     const before = { bodies: pw.bodyCount, joints: pw.jointCount };
     const rig = new Rig(pw);
     rig.lab.build(rig.ctx);
-    for (const id of ['steel', 'oak', 'sand', 'trampoline', 'foam', 'concrete'] as const) {
+    for (const id of ['trampoline', 'foam', 'steel'] as const) {
       rig.lab.setFloor(id);
       rig.run(0.2);
     }
@@ -281,10 +281,10 @@ describe('the Drop Tower, as shipped', () => {
 
   it('drops a BATCH: every cube in the footprint rides and releases together', async () => {
     const rig = await rigWithStage();
-    const w = rig.store.spawn('W', 2, { x: 0, y: config.drop.plate.topYM + IN + 0.02, z: 0 });
+    const w = rig.store.spawn('W', 2, { x: 0, y: rig.lab.platformY + IN + 0.02, z: 0 });
     const al = rig.store.spawn('Al', 1, {
       x: 0.15,
-      y: config.drop.plate.topYM + IN / 2 + 0.02,
+      y: rig.lab.platformY + IN / 2 + 0.02,
       z: 0.15,
     });
     rig.run(0.5);
@@ -312,14 +312,14 @@ describe('the Drop Tower, as shipped', () => {
 
   it('applyShare restores floor, height, and drag — and shareBlock round-trips it', async () => {
     const rig = await rigWithStage();
-    rig.lab.applyShare({ hM: 7.3, floor: 'oak', air: false });
-    expect(rig.lab.shareBlock()).toEqual({ hM: 7.3, floor: 'oak', air: false });
+    rig.lab.applyShare({ hM: 7.3, floor: 'foam', air: false });
+    expect(rig.lab.shareBlock()).toEqual({ hM: 7.3, floor: 'foam', air: false });
     // The codec vouches for shape, not for range: height clamps to the tower's rails,
     // and a SurfaceId that is not a floor of this lab leaves the floor alone.
-    rig.lab.applyShare({ hM: 99, floor: 'rubber', air: true });
+    rig.lab.applyShare({ hM: 99, floor: 'oak', air: true }); // a SurfaceId that is no longer a floor
     const block = rig.lab.shareBlock();
     expect(block.hM).toBe(config.drop.tower.maxHM);
-    expect(block.floor).toBe('oak');
+    expect(block.floor).toBe('foam');
     expect(block.air).toBe(true);
     rig.lab.teardown();
   });
@@ -340,6 +340,67 @@ describe('the Drop Tower, as shipped', () => {
     rig.run(0.1);
     const p3 = rig.lab.preferredSpawnPoint()!;
     expect(p3.z).toBeCloseTo(config.drop.staging.zM, 6);
+    rig.pw.free();
+  }, 120_000);
+});
+
+describe('C1 — the wine glass on the tower (18 §6)', () => {
+  it('deploys, persists through the carry, and SHATTERS under 2″ W from 2 m', async () => {
+    const rig = await rigWithStage();
+    const base = rig.pw.bodyCount;
+    rig.lab.setTarget('wine-glass');
+    rig.run(0.2);
+    expect(rig.lab.targetId).toBe('wine-glass');
+    expect(rig.pw.bodyCount).toBe(base + 2); // pedestal + intact glass
+
+    rig.store.spawn('W', 2, { x: 0.15, y: rig.lab.platformY + IN + 0.02, z: 0.15 });
+    rig.run(0.5);
+    rig.lab.setHeight(2);
+    rig.lab.hoist();
+    rig.run(0.1);
+    // The raised-platform redesign (2026-08-25): the target PERSISTS — hoisting no
+    // longer sweeps the plate, and refresh() begins each cycle with a fresh glass.
+    // −1: the platform collider leaves with the winch (kinematic cargo needs no floor).
+    expect(rig.pw.bodyCount, 'pedestal + fresh glass + cube, platform away').toBe(base + 2);
+    expect(rig.runUntil(() => rig.lab.towerPhase === 'armed', 10)).toBe(true);
+
+    rig.lab.dropNow();
+    expect(rig.runUntil(() => rig.lab.state?.phase === 'done', 12)).toBe(true);
+    expect(rig.lab.state!.verdict).toBe('shattered');
+    // Glass gone; pedestal + cube + the surviving shards remain. CCD keeps most
+    // aboard, and the prop cull sweeps any edge-case escapee — tolerate one or two.
+    // Platform still away (the carriage is riding home as the verdict lands).
+    expect(rig.pw.bodyCount).toBeGreaterThanOrEqual(base + 1 + 10);
+    expect(rig.pw.bodyCount).toBeLessThanOrEqual(base + 1 + 12);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('a light cube from the minimum target height SURVIVES; pads refuse targets', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('wine-glass');
+    rig.run(0.2);
+    rig.store.spawn('Al', 1, { x: 0.15, y: rig.lab.platformY + IN / 2 + 0.02, z: 0.15 });
+    rig.run(0.5);
+    rig.lab.setHeight(0.1); // clamps to 0.6 while a target stands
+    rig.lab.hoist();
+    expect(rig.runUntil(() => rig.lab.towerPhase === 'armed', 10)).toBe(true);
+    rig.lab.dropNow();
+    expect(rig.runUntil(() => rig.lab.state?.phase === 'done', 12)).toBe(true);
+    rig.run(0.1); // SURVIVED is decided at the done transition; it lands next tick
+    expect(rig.lab.state!.verdict).toBe('survived');
+    // …and the little cube sits INSIDE the goblet, not on an invisible lid over it
+    // (the solid bowl collider bug, 2026-08-25).
+    const survivor = [...rig.store.all].find((e) => e.spec.metal === 'Al')!;
+    expect(survivor.curr.p.y).toBeLessThan(0.42); // below the rim (0.423)
+    expect(survivor.curr.p.y).toBeGreaterThan(0.3); // caught in the cup, not fallen through
+
+    rig.lab.setFloor('trampoline');
+    rig.run(0.1);
+    expect(rig.lab.targetId, 'pads clear the target').toBe('none');
+    rig.lab.setTarget('wine-glass');
+    expect(rig.lab.targetId, 'and refuse a new one').toBe('none');
+    rig.lab.teardown();
     rig.pw.free();
   }, 120_000);
 });

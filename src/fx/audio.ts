@@ -32,7 +32,8 @@ export type VoiceId =
   | 'crack_concrete'
   | 'thump_sand'
   | 'boing_trampoline'
-  | 'clack_hook';
+  | 'clack_hook'
+  | 'tinkle_glass';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -225,6 +226,19 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
     noiseHz: 3300,
     noiseDecayS: 0.012,
     noiseQ: 1.3,
+  },
+  /*
+   * The wine glass's death (18 §5.3): a bright inharmonic tinkle cluster, played by
+   * the lab at the shard swap — never by the impact bus.
+   */
+  tinkle_glass: {
+    freq: 2950,
+    partials: [1, 1.51, 2.32, 3.17],
+    decayS: 0.45,
+    noise: 0.35,
+    noiseHz: 5600,
+    noiseDecayS: 0.05,
+    noiseQ: 2.2,
   },
 };
 

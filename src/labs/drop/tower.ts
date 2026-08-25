@@ -3,7 +3,7 @@ import { config } from '../../config.ts';
 import { galvanized, hazardChevron, paintedSteel, stencilPlate } from './rigtex.ts';
 import type { Entity } from '../../core/entities.ts';
 import type { LabContext } from '../lab.ts';
-import type { EntityId, Quat } from '../../types.ts';
+import type { BodyHandle, EntityId, Quat } from '../../types.ts';
 
 /**
  * The winch and its RELEASE CARRIAGE (17 §3). No joint anywhere: the carried cube IS
@@ -105,7 +105,7 @@ export class Tower {
   #holdY = T.restCableEndYM;
 
   /** Door leaves, 0 closed .. 1 open. Animated on the fixed step, drawn interpolated. */
-  #doorsOpen = 1;
+  #doorsOpen = 0; // closed at idle — the floor IS the platform (2026-08-25)
   #doorsPrev = 1;
 
   readonly #group = new THREE.Group();
@@ -143,6 +143,7 @@ export class Tower {
   }
 
   build(): void {
+    this.#createPlatform();
     const galv = galvanized();
     const steel = new THREE.MeshStandardMaterial({
       color: galv ? 0xffffff : 0x8a939c,
@@ -331,6 +332,14 @@ export class Tower {
       this.#disposables.push(chevron.map);
     }
     this.#disposables.push(chevMat);
+    /*
+     * The platform deck is DARKER than any cube face (graphite over the painted
+     * maps): a pale 2″ cube on a near-white deck was invisible at the stage camera
+     * (user: "so cube is visible there once placed", 2026-08-25).
+     */
+    const deckMat = (painted as THREE.MeshStandardMaterial).clone();
+    deckMat.color.setHex(0x565b61);
+    this.#disposables.push(deckMat);
     const halfGeo = new THREE.BoxGeometry(IX / 2, 0.012, IX * 2);
     const edgeGeo = new THREE.BoxGeometry(0.035, 0.014, IX * 2);
     this.#disposables.push(halfGeo, edgeGeo);
@@ -338,11 +347,11 @@ export class Tower {
     const mkFold = (side: -1 | 1): [THREE.Group, THREE.Group] => {
       const hinge = new THREE.Group();
       hinge.position.set(side * IX, doorY, 0);
-      const outer = new THREE.Mesh(halfGeo, painted);
+      const outer = new THREE.Mesh(halfGeo, deckMat);
       outer.position.set(-side * (IX / 4), 0, 0);
       const knuckle = new THREE.Group();
       knuckle.position.set(-side * (IX / 2), 0, 0);
-      const inner = new THREE.Mesh(halfGeo, painted);
+      const inner = new THREE.Mesh(halfGeo, deckMat);
       inner.position.set(-side * (IX / 4), 0, 0);
       const edge = new THREE.Mesh(edgeGeo, chevMat);
       edge.position.set(-side * (IX / 2 - 0.0175), 0.002, 0);
@@ -482,7 +491,53 @@ export class Tower {
   }
 
   /** Begin loading: the open bay descends around the cargo, captures, closes, hoists. */
-  load(cubes: readonly Entity[]): boolean {
+  /** While carrying for a TARGET drop, this cargo cube glides to plate centre. */
+  #centreId: EntityId | null = null;
+  /**
+   * The loading platform: a BORN-FIXED collider under the closed doors, existing
+   * ONLY while the carriage idles at rest (born fresh on every return — the
+   * moved-fixed-body event silence, 2026-08-25). Carried cubes are kinematic and
+   * need no floor; released cubes must never meet a stale one.
+   */
+  #platform: BodyHandle | null = null;
+
+  /** Debug/testing: the raw cable state vs its current target. */
+  get dbgCable(): { y: number; target: number; v: number } {
+    return { y: this.#cableEndY, target: this.#cableTarget(), v: this.#hoistV };
+  }
+
+  get idleDoorPlaneY(): number {
+    return T.restCableEndYM - DOOR_DROP;
+  }
+
+  #createPlatform(): void {
+    if (this.#platform !== null) return;
+    this.#platform = this.ctx.physics.addCompound({
+      kind: 'fixed',
+      at: { x: 0, y: this.idleDoorPlaneY - 0.01, z: 0 },
+      parts: [
+        {
+          shape: { kind: 'box', halfExtents: { x: IX, y: 0.01, z: IX } },
+          material: 'steel',
+        },
+      ],
+    });
+  }
+
+  #removePlatform(): void {
+    if (this.#platform === null) return;
+    this.ctx.physics.remove(this.#platform);
+    this.#platform = null;
+  }
+
+  /** True once the target-drop subject hangs over plate centre (or no target). */
+  get centredForDrop(): boolean {
+    if (this.#centreId === null) return true;
+    const c = this.#cargo.find((x) => x.id === this.#centreId);
+    return c === undefined || Math.hypot(c.dx, c.dz) < 0.01;
+  }
+
+  load(cubes: readonly Entity[], centreId?: EntityId): boolean {
     if ((this.#phase !== 'idle' && this.#phase !== 'dropped') || cubes.length === 0) return false;
     this.#cargo = cubes.map((e) => ({
       id: e.id,
@@ -491,7 +546,16 @@ export class Tower {
       sideM: e.spec.sideM,
       q: { ...e.curr.q },
     }));
-    this.#phase = 'loading';
+    this.#centreId = centreId ?? null;
+    /*
+     * The cubes already REST on the platform at exactly the carry pose (bottom =
+     * door plane), so capture is a seamless body-kind flip — no descent, no 6 mm
+     * nudge, no visual pop (2026-08-25 redesign). The platform collider leaves
+     * with them; kinematic cargo needs no floor.
+     */
+    for (const c of this.#cargo) this.ctx.entities.setKind(c.id, 'kinematic');
+    this.#removePlatform();
+    this.#phase = 'hoisting';
     return true;
   }
 
@@ -553,23 +617,21 @@ export class Tower {
     this.#stepProfile(target, dt);
 
     if (
-      phaseAtEntry === 'loading' &&
-      this.#cargo.length > 0 &&
-      Math.abs(this.#cableEndY - target) < 0.002
+      phaseAtEntry === 'idle' &&
+      this.#platform === null &&
+      Math.abs(this.#cableEndY - T.restCableEndYM) < 0.01
     ) {
-      // Capture: the body-kind switch IS the grab; the nudge lifts each cube 6 mm so
-      // the leaves can close beneath the batch (17 §3.3).
-      for (const c of this.#cargo) this.ctx.entities.setKind(c.id, 'kinematic');
-      this.#phase = 'hoisting';
-    } else if (phaseAtEntry === 'hoisting' && Math.abs(this.#cableEndY - target) < 0.001) {
+      this.#createPlatform(); // home again: a fresh, born-in-place loading floor
+    }
+    if (phaseAtEntry === 'hoisting' && Math.abs(this.#cableEndY - target) < 0.001) {
       this.#phase = 'armed';
     } else if (phaseAtEntry === 'armed' && Math.abs(this.#cableEndY - target) > 0.005) {
       this.#phase = 'hoisting';
     }
 
-    // Doors: open at rest and after release, closed for the carry; the release snap
-    // is faster than free fall, like a sprung drop-tester leaf (17 §3.4).
-    const doorsTarget = this.#phase === 'hoisting' || this.#phase === 'armed' ? 0 : 1;
+    // Doors: CLOSED whenever the floor is a platform (idle, carry) and open only
+    // after the release; the snap outruns free fall (17 §3.4; redesigned 2026-08-25).
+    const doorsTarget = this.#phase === 'dropped' ? 1 : 0;
     const rate =
       doorsTarget > this.#doorsOpen
         ? this.#phase === 'dropped'
@@ -584,9 +646,20 @@ export class Tower {
 
     if (this.#cargo.length && (this.#phase === 'hoisting' || this.#phase === 'armed')) {
       const k = 1 - Math.exp(-T.levelRate * dt);
+      // Above the pedestal zone, the target-drop subject glides to plate centre —
+      // the load swings inward as it rises, crane-style. Gated by height so the
+      // kinematic carry never sweeps a cube through the pedestal at ground level.
+      const kCentre = 1 - Math.exp(-8 * dt);
+      // Must sit BELOW the minimum target-drop door plane (0.62 at h = 0.6), and
+      // above the glass top (0.465) with margin — the glide happens 15 cm clear.
+      const clearOfPedestal = this.#doorPlaneY() > 0.6;
       for (const c of this.#cargo) {
         const ce = this.ctx.entities.get(c.id);
         if (!ce) continue;
+        if (this.#centreId === c.id && clearOfPedestal) {
+          c.dx += (0 - c.dx) * kCentre;
+          c.dz += (0 - c.dz) * kCentre;
+        }
         c.q = nlerpToLevel(c.q, k);
         this.ctx.physics.setKinematicTarget(
           ce.body,
@@ -600,15 +673,6 @@ export class Tower {
   /** Where the cable end is headed, given the phase. */
   #cableTarget(): number {
     switch (this.#phase) {
-      case 'loading': {
-        // Door plane to the LOWEST bottom face in the cargo, plus the capture nudge.
-        let minBottom = Infinity;
-        for (const c of this.#cargo) {
-          const e = this.ctx.entities.get(c.id);
-          if (e) minBottom = Math.min(minBottom, e.curr.p.y - c.sideM / 2);
-        }
-        return Number.isFinite(minBottom) ? minBottom + T.clampGapM + DOOR_DROP : T.restCableEndYM;
-      }
       case 'hoisting':
       case 'armed':
         return this.floorTopYM() + this.targetHM + DOOR_DROP;
@@ -622,13 +686,26 @@ export class Tower {
   /** Trapezoidal profile with a braking-distance check — no overshoot, no teleport. */
   #stepProfile(targetY: number, dt: number): void {
     const dy = targetY - this.#cableEndY;
+    /*
+     * Exact hits are arrivals. When a trip quantizes onto the v·dt grid the cable
+     * lands PRECISELY on the target at speed: dy = 0 gives dir 0 — no brake, no
+     * crossing clamp — and the profile sails through into a perpetual symmetric
+     * limit cycle (±6.7 mm at ±0.4 m/s, measured live as the armed↔hoisting UI
+     * flicker; user-caught with an 8″ hoist, 2026-08-25).
+     */
+    if (Math.abs(dy) < 1e-9) {
+      this.#cableEndY = targetY;
+      this.#hoistV = 0;
+      return;
+    }
     const dir = Math.sign(dy);
     const brakingM = (this.#hoistV * this.#hoistV) / (2 * T.hoistAccelMps2);
     const shouldBrake = Math.abs(dy) <= brakingM && Math.sign(this.#hoistV) === dir;
     const a = (shouldBrake ? -dir : dir) * T.hoistAccelMps2;
     this.#hoistV = Math.max(-T.hoistSpeedMps, Math.min(T.hoistSpeedMps, this.#hoistV + a * dt));
     let next = this.#cableEndY + this.#hoistV * dt;
-    if ((dy > 0 && next > targetY) || (dy < 0 && next < targetY)) {
+    // >= / <=: LANDING ON the target while moving is a crossing too (same bug).
+    if ((dy > 0 && next >= targetY) || (dy < 0 && next <= targetY)) {
       next = targetY;
       this.#hoistV = 0;
     }
@@ -659,6 +736,7 @@ export class Tower {
 
   teardown(): void {
     this.unload();
+    this.#removePlatform();
     this.ctx.scene.remove(this.#group);
     for (const d of this.#disposables) d.dispose();
     this.#disposables.length = 0;

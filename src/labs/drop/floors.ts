@@ -18,20 +18,15 @@ import type { BodyHandle, SurfaceId } from '../../types.ts';
  * balance owns its own materials.
  */
 
-export type FloorId = 'concrete' | 'steel' | 'oak' | 'sand' | 'trampoline' | 'foam';
-export const FLOOR_IDS: readonly FloorId[] = [
-  'concrete',
-  'steel',
-  'oak',
-  'sand',
-  'trampoline',
-  'foam',
-];
+/*
+ * Reduced from six to three (user decision 2026-08-25): concrete, oak, and sand
+ * "don't do much" — their whole identity was decal marks and slightly different
+ * thuds. Steel is the rigid default; the pads carry the drama; glass joins in M3 C3.
+ */
+export type FloorId = 'steel' | 'trampoline' | 'foam';
+export const FLOOR_IDS: readonly FloorId[] = ['steel', 'trampoline', 'foam'];
 export const FLOOR_LABELS: Readonly<Record<FloorId, string>> = {
-  concrete: 'Concrete',
   steel: 'Steel',
-  oak: 'Oak',
-  sand: 'Sand',
   trampoline: 'Trampoline',
   foam: 'Foam',
 };
@@ -39,7 +34,7 @@ export const FLOOR_LABELS: Readonly<Record<FloorId, string>> = {
 const P = config.drop.plate;
 
 export class Floors {
-  #active: FloorId = 'concrete';
+  #active: FloorId = 'steel';
   #bodies: BodyHandle[] = [];
   #pad: CompliantPad | null = null;
   #meshes: THREE.Object3D[] = [];
@@ -63,7 +58,7 @@ export class Floors {
     return this.#pad ? this.#pad.padTopRestY : P.topYM;
   }
 
-  build(id: FloorId = 'concrete'): void {
+  build(id: FloorId = 'steel'): void {
     this.mount(id);
   }
 
@@ -150,8 +145,15 @@ export class Floors {
         const blockGeo = new THREE.BoxGeometry(P.halfM * 2, rest, P.halfM * 2);
         this.#disposables.push(blockGeo);
         const block = new THREE.Mesh(blockGeo, standMat);
-        block.position.set(0, rest / 2 - 0.005, 0);
-        frameGroup.add(block);
+        /*
+         * The block hangs from the PAD-BOUND group, top at the pad, bottom at the
+         * stage — so it compresses live with every stroke and sinks into the stage
+         * when the pad is crushed flat. As static scenery it stood full height while
+         * the crushed pad lay at 1 cm, and the cube "clipped through the foam"
+         * (user-caught, 2026-08-25).
+         */
+        block.position.set(0, -rest / 2, 0);
+        matGroup.add(block);
       }
     } else {
       const surface: SurfaceId = id;
@@ -169,10 +171,6 @@ export class Floors {
       mesh.receiveShadow = true;
       this.ctx.scene.add(mesh);
       this.#meshes.push(mesh);
-      // The plate's top face is the decal target (16 §10.3); steel takes no marks.
-      if (surface === 'concrete' || surface === 'oak' || surface === 'sand') {
-        this.ctx.fx.decals.setTarget(mesh, surface);
-      }
       /*
        * The rim frame that makes the plate READ as the landing zone. Concrete on the
        * concrete stage was literally invisible in the screenshot review (2026-08-24)

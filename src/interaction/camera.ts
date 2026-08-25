@@ -24,6 +24,16 @@ export interface FrameOptions {
   centreYM?: number;
   /** Breathing room as a multiple of the radius. */
   margin?: number;
+  /**
+   * Pitch for this framing, degrees above the horizon. A lab may pick the angle its
+   * stage reads best at — the Drop lab's raised platform needs a LOW shot so a cube
+   * on the deck silhouettes instead of flattening into it (user, 2026-08-25). The
+   * player's own orbit still overrides afterwards, as with every framing.
+   */
+  elevationDeg?: number;
+  /** Yaw for this framing, degrees — the drop lab turns so the mast never
+   * backdrops plate centre (a dark cube camouflaged into it; user, 2026-08-25). */
+  azimuthDeg?: number;
 }
 
 export class CameraRig {
@@ -150,6 +160,8 @@ export class CameraRig {
    * and a wall of oak. A lab declares its own extent and this frames that instead.
    */
   frameRadius(radiusM: number, opts: FrameOptions = {}): void {
+    if (opts.elevationDeg !== undefined) this.#goal.elevationRad = opts.elevationDeg * DEG;
+    if (opts.azimuthDeg !== undefined) this.#goal.azimuthRad = opts.azimuthDeg * DEG;
     this.#lastFrame = { radiusM, opts };
     const fit = opts.fit ?? 'stage';
     const vFov = (config.camera.fovDeg * Math.PI) / 180;
@@ -247,6 +259,17 @@ export class CameraRig {
 
   setReducedMotion(reduced: boolean): void {
     this.#reducedMotion = reduced;
+  }
+
+  /**
+   * Back to the stock yaw/pitch. Lab switches call this so one lab's chosen angle
+   * (the Drop tower's az −15 / el 16) never leaks into the next lab's stage
+   * (user-caught, 2026-08-25). A lab that wants its own re-applies it via
+   * `frameRadius`'s azimuthDeg/elevationDeg.
+   */
+  resetOrientation(): void {
+    this.#goal.azimuthRad = config.camera.azimuthDeg * DEG;
+    this.#goal.elevationRad = config.camera.elevationDeg * DEG;
   }
 
   /** Current camera-to-target distance, for screen-proportional FX (16 §10.1). */

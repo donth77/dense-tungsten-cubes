@@ -27,6 +27,8 @@ export const VERDICT_LABEL: Readonly<Record<DropVerdict, string>> = {
   'bottomed-out': 'BOTTOMED OUT',
   'hit-a-cube': 'HIT A CUBE',
   'off-the-plate': 'OFF THE PLATE',
+  shattered: 'SHATTERED',
+  survived: 'SURVIVED',
 };
 
 export function verdictTone(v: DropVerdict): 'ok' | 'warn' {

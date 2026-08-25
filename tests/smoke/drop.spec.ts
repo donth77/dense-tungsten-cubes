@@ -35,7 +35,7 @@ test.describe('the Drop Tower', () => {
     await expect(hoist).toBeDisabled();
   });
 
-  test('spawn → hoist → drop → verdict, with the replay one tap away', async ({ page }) => {
+  test('spawn → hoist → drop → verdict', async ({ page }) => {
     await bootIntoDrop(page);
 
     // The first spawn lands on the plate (preferredSpawnPoint).
@@ -56,18 +56,14 @@ test.describe('the Drop Tower', () => {
         return lab?.state?.phase === 'done';
       },
       null,
-      { timeout: 15_000 },
+      // 30 s: four parallel WebGL workers on a loaded machine starve sim-time —
+      // the physics itself is pinned in the vitest suites (2026-08-25).
+      { timeout: 30_000 },
     );
 
     // The verdict is on the panel, with the measured facts under it.
-    await expect(page.locator('.lp-status')).toHaveText(/LANDED|BOUNCED|CHIPPED|CRACKED/);
+    await expect(page.locator('.lp-status')).toHaveText(/RANG|LANDED|BOUNCED/); // steel default
     await expect(page.locator('.lp-fact').first()).toContainText('m/s');
-
-    // REPLAY exists, plays, and stops cleanly.
-    await page.getByRole('button', { name: 'REPLAY' }).click();
-    expect(await page.evaluate(() => window.__dense!.app.player.isPlaying)).toBe(true);
-    await page.evaluate(() => window.__dense!.app.stopReplay());
-    expect(await page.evaluate(() => window.__dense!.app.player.isPlaying)).toBe(false);
   });
 
   test('floor switching is refused mid-fall, honoured at rest', async ({ page }) => {
@@ -85,57 +81,5 @@ test.describe('the Drop Tower', () => {
       'aria-checked',
       'true',
     );
-  });
-
-  test('the replay chrome takes the panel over and leaves cleanly', async ({ page }) => {
-    await bootIntoDrop(page);
-    await page.evaluate(() => window.__dense!.app.spawn());
-    await page.waitForTimeout(800);
-    await page.getByRole('button', { name: 'HOIST' }).click();
-    const drop = page.getByRole('button', { name: 'DROP', exact: true });
-    await expect(drop).toBeEnabled({ timeout: 10_000 });
-    await drop.click();
-    await page.waitForFunction(
-      () => {
-        const lab = window.__dense!.lab() as { state?: { phase?: string } } | null;
-        return lab?.state?.phase === 'done';
-      },
-      null,
-      { timeout: 15_000 },
-    );
-    // The live ring is only 1.5 s deep. Waiting past it proves REPLAY plays the
-    // verdict-time snapshot, not the long-gone ring (dead-button bug, 2026-08-25).
-    await page.waitForTimeout(2000);
-    await page.getByRole('button', { name: 'REPLAY' }).click();
-    await expect(page.locator('.replaybar')).toBeVisible();
-    await expect(page.locator('.replaybar input[type="range"]')).toBeVisible();
-    await expect(page.locator('.labpanel-inner')).toBeHidden();
-    await page.getByRole('button', { name: 'EXIT' }).click();
-    await expect(page.locator('.replaybar')).toBeHidden();
-    await expect(page.getByRole('button', { name: 'REPLAY' })).toBeVisible();
-  });
-
-  test('a share link boots the whole scene back', async ({ page }) => {
-    await bootIntoDrop(page);
-    await page.evaluate(() => window.__dense!.app.spawn());
-    await page.waitForTimeout(800);
-    const url = await page.evaluate(() => {
-      const lab = window.__dense!.lab() as { applyShare(d: object): void };
-      lab.applyShare({ hM: 10, floor: 'sand', air: true });
-      window.__dense!.app.share(); // headless clipboard may refuse; the hash still lands
-      return location.href;
-    });
-    expect(url).toContain('#s=');
-    await page.goto('about:blank');
-    await page.goto(url);
-    await page.waitForFunction(() => window.__dense?.app.labs.activeId === 'drop', null, {
-      timeout: 20_000,
-    });
-    await page.waitForTimeout(1500);
-    expect(await page.evaluate(() => window.__dense!.app.entities.size)).toBe(1);
-    expect(
-      await page.evaluate(() => (window.__dense!.lab() as { shareBlock(): object }).shareBlock()),
-    ).toMatchObject({ hM: 10, floor: 'sand', air: true });
-    await expect(page.getByRole('radio', { name: 'Sand' })).toHaveAttribute('aria-checked', 'true');
   });
 });

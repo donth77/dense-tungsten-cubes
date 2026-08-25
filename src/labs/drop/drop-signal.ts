@@ -1,4 +1,5 @@
 import { config } from '../../config.ts';
+import { PROP_ID_BASE } from '../../types.ts';
 import type { EntityId, ImpactEvent, SurfaceId } from '../../types.ts';
 
 /**
@@ -23,7 +24,9 @@ export type DropVerdict =
   | 'absorbed'
   | 'bottomed-out'
   | 'hit-a-cube'
-  | 'off-the-plate';
+  | 'off-the-plate'
+  | 'shattered'
+  | 'survived';
 
 export interface DropSample {
   /** Centre and bottom-face heights of the dropped cube, and its motion. */
@@ -129,7 +132,8 @@ export class DropSignal {
           deliveredJ: hit.energyJ,
           partner: hit.b,
         };
-        this.#hitCube = typeof hit.b === 'number';
+        // Props carry numeric ids too (18 §5.1) — "another cube" means BELOW the range.
+        this.#hitCube = typeof hit.b === 'number' && hit.b < PROP_ID_BASE;
         this.#offPlate =
           !this.#hitCube &&
           (Math.abs(hit.point.x) > this.#plateHalfM || Math.abs(hit.point.z) > this.#plateHalfM);
@@ -160,7 +164,15 @@ export class DropSignal {
   }
 
   /** 16 §7.6, with its precedence: partner, then pads, then marks, then bounce. */
+  /** Target verdicts outrank everything (18 §5.4) — the break IS the story. */
+  #targetVerdict: DropVerdict | null = null;
+
+  setTargetVerdict(v: DropVerdict): void {
+    this.#targetVerdict = v;
+  }
+
   #verdict(reboundM: number, padBottomed: boolean): DropVerdict {
+    if (this.#targetVerdict) return this.#targetVerdict;
     if (this.#hitCube) return 'hit-a-cube';
     if (this.#offPlate) return 'off-the-plate';
     const e = this.#impact?.deliveredJ ?? 0;
@@ -173,18 +185,8 @@ export class DropSignal {
         // word is BOUNCED; "caught" is reserved for the modest, held-onto return.
         if (reboundM >= V.thrownFrac * this.#releaseHM) return 'bounced';
         return bounced ? 'caught' : 'absorbed';
-      case 'concrete':
-        if (e >= V.crackJ) return 'cracked';
-        if (e >= V.chipJ) return 'chipped';
-        break;
-      case 'oak':
-        if (e >= V.dentJ) return 'dented';
-        break;
       case 'steel':
         if (e >= V.ringJ) return 'rang';
-        break;
-      case 'sand':
-        if (e >= V.craterJ) return 'cratered';
         break;
       default:
         break;

@@ -88,6 +88,13 @@ export interface ColliderPart {
   massKg?: number;
 }
 
+/**
+ * Lab-prop entity ids start here (18 §5.1) — breakable targets and their kin. Cube
+ * ids are small ints from the EntityStore; anything at or above this line is a prop,
+ * and consumers that mean "another CUBE" must check the range, not just the type.
+ */
+export const PROP_ID_BASE = 1_000_000;
+
 export interface CompoundBodySpec {
   /**
    * `kinematic` is a body the CALLER positions each step and the solver treats as
@@ -101,6 +108,13 @@ export interface CompoundBodySpec {
   at: Vec3;
   parts: readonly ColliderPart[];
   ccd?: boolean;
+  /**
+   * Impact identity for lab PROPS (18 §5.1) — a breakable target must be nameable by
+   * the impact channel. Prop ids live in a reserved range (≥ 1,000,000) so they can
+   * never collide with the EntityStore's cube ids, and the drain's subject ordering
+   * prefers the LOWER id — the player's cube stays `a`.
+   */
+  entityId?: EntityId;
   /**
    * Rapier's per-body solver iterations. Measured HARMFUL on the balance's shared
    * constraint network (W0: +4 iterations sent equal-load rest from 0.07 to 82 degrees),

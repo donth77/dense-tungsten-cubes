@@ -1,4 +1,6 @@
 import { config } from '../../config.ts';
+import { TARGET_IDS, TARGET_LABELS, TargetRig } from './targets.ts';
+import type { TargetId } from './targets.ts';
 import type { ReplayClip } from '../../core/replay.ts';
 import { dragForceInto } from '../../core/aero.ts';
 import { length, mass } from '../../data/format.ts';
@@ -56,6 +58,9 @@ export class DropLab implements Lab {
   /** Everything released by the last DROP; the SUBJECT (heaviest) owns the readout. */
   #droppedIds = new Set<EntityId>();
   #subjectId: EntityId | null = null;
+  #targets!: TargetRig;
+  /** DROP pressed before the load settled over the target — release when it has. */
+  #pendingDrop = false;
   #mark: { step: number } | null = null;
   /** Steps since the mark — the clip is cut the moment the post-window completes. */
   #postMarkSteps = 0;
@@ -82,9 +87,10 @@ export class DropLab implements Lab {
   build(ctx: LabContext): void {
     this.#ctx = ctx;
     this.#floors = new Floors(ctx);
-    this.#floors.build('concrete');
+    this.#floors.build('steel');
     this.#tower = new Tower(ctx, () => this.#floors.topYM);
     this.#tower.build();
+    this.#targets = new TargetRig(ctx);
     this.#applyFraming();
     this.#publish();
   }
@@ -101,7 +107,7 @@ export class DropLab implements Lab {
         (e) => e.heldBy !== null && Math.hypot(e.curr.p.x, e.curr.p.z) < D.plate.halfM,
       );
       this.#ctx.ui.toast(
-        heldNearby ? 'Let go of the cube first' : 'Place a cube on the plate first',
+        heldNearby ? 'Let go of the cube first' : 'Place a cube on the platform first',
       );
       return;
     }
@@ -110,13 +116,33 @@ export class DropLab implements Lab {
     this.#clip = null;
     this.#droppedIds.clear();
     this.#subjectId = null;
+    this.#pendingDrop = false;
+    this.#targets.refresh(); // a fresh target (and a swept debris field) per cycle
     this.#floors.pad?.resetBottoming();
-    this.#tower.load(cubes);
+    // A target drop must LAND on the target: the heaviest cube (the readout's
+    // subject) glides to plate centre during the climb (18 §5.5 amendment).
+    const heaviest =
+      this.#targets.selected !== 'none'
+        ? cubes.reduce((a, b) => (b.massKg > a.massKg ? b : a)).id
+        : undefined;
+    this.#tower.load(cubes, heaviest);
     this.#publish();
   }
 
   /** Release the batch. The pad's regime is decided HERE, before anything falls. */
   dropNow(): void {
+    if (!this.#tower.centredForDrop) {
+      // Crane discipline: the load settles over the target, THEN releases.
+      this.#pendingDrop = true;
+      return;
+    }
+    if (this.#tower.phase === 'hoisting' && this.#tower.hasCargo) {
+      // A transient armed→hoisting flap must never EAT the click (smoke-caught,
+      // 2026-08-25: DROP landed during the flap, no-oped silently, and the run
+      // hung). Latch it; afterPhysics releases the moment the winch re-arms.
+      this.#pendingDrop = true;
+      return;
+    }
     if (this.#tower.phase !== 'armed' || !this.#tower.hasCargo) return;
     const cargo: Entity[] = [];
     for (const id of this.#tower.cargoIds) {
@@ -164,6 +190,10 @@ export class DropLab implements Lab {
       this.#ctx.ui.toast('Wait for the landing');
       return;
     }
+    if (id !== 'steel' && this.#targets.selected !== 'none') {
+      this.#targets.select('none');
+      this.#ctx.ui.toast('Targets need the steel floor');
+    }
     this.#floors.mount(id);
     // The last verdict described the floor that just left; a reading must never
     // outlive the surface it measured (screenshot review 2026-08-24).
@@ -176,7 +206,43 @@ export class DropLab implements Lab {
   }
 
   setHeight(hM: number): void {
-    this.#tower.targetHM = Math.min(D.tower.maxHM, Math.max(D.tower.minHM, hM));
+    // With a target standing 0.47 m proud of the plate, releases below it would
+    // spawn the carry inside the pedestal zone.
+    const minH = this.#targets.selected !== 'none' ? 0.6 : D.tower.minHM;
+    this.#tower.targetHM = Math.min(D.tower.maxHM, Math.max(minH, hM));
+    this.#publish();
+  }
+
+  /** Debug/testing passthrough. */
+  get dbgCable(): { y: number; target: number; v: number } {
+    return this.#tower.dbgCable;
+  }
+
+  /** The loading platform's top surface — where spawns land (2026-08-25 redesign). */
+  get platformY(): number {
+    return this.#tower.idleDoorPlaneY;
+  }
+
+  get targetId(): TargetId {
+    return this.#targets.selected;
+  }
+
+  /** Debug/testing: the target's cycle state. */
+  get targetState(): { deployed: boolean; broken: boolean; wasHit: boolean } {
+    return {
+      deployed: this.#targets.deployed,
+      broken: this.#targets.broken,
+      wasHit: this.#targets.wasHit,
+    };
+  }
+
+  setTarget(id: TargetId): void {
+    if (id !== 'none' && this.#floors.active !== 'steel') {
+      this.#ctx.ui.toast('Targets need the steel floor');
+      return;
+    }
+    this.#targets.select(id);
+    if (id !== 'none' && this.#tower.targetHM < 0.6) this.#tower.targetHM = 0.6;
     this.#publish();
   }
 
@@ -190,35 +256,28 @@ export class DropLab implements Lab {
 
   /** Every un-held dynamic cube standing inside the carriage's footprint (17 §3.1). */
   #cubesInFootprint(): Entity[] {
+    // ON THE PLATFORM (2026-08-25 redesign): dynamic, un-held, inside the bay, and
+    // resting at the platform band — cubes on the PLATE belong to the floor now.
+    const platY = this.#tower.idleDoorPlaneY;
     const out: Entity[] = [];
-    const lim = CARRIAGE_INTERIOR_HALF_M - 0.01;
     for (const e of this.#ctx.entities.all) {
       if (e.kind !== 'dynamic' || e.heldBy !== null) continue;
       const half = e.spec.sideM / 2;
-      const p = e.curr.p;
-      if (Math.abs(p.x) + half > lim || Math.abs(p.z) + half > lim) continue;
-      if (p.y > this.#floors.topYM + 0.6) continue;
+      if (
+        Math.max(Math.abs(e.curr.p.x), Math.abs(e.curr.p.z)) + half >
+        CARRIAGE_INTERIOR_HALF_M - 0.01
+      )
+        continue;
+      const bottom = e.curr.p.y - half;
+      if (bottom < platY - 0.05 || bottom > platY + 0.4) continue;
       out.push(e);
     }
     return out;
   }
 
-  /** The nearest un-held dynamic cube standing on the plate. */
+  /** The first cube standing ON THE PLATFORM (2026-08-25 redesign). */
   #cubeOnPlate(): Entity | null {
-    let best: Entity | null = null;
-    let bestD = Infinity;
-    for (const e of this.#ctx.entities.all) {
-      if (e.kind !== 'dynamic') continue;
-      const p = e.curr.p;
-      if (Math.abs(p.x) > D.plate.halfM || Math.abs(p.z) > D.plate.halfM) continue;
-      if (p.y > this.#floors.topYM + 0.6) continue;
-      const d = Math.hypot(p.x, p.z);
-      if (d < bestD) {
-        bestD = d;
-        best = e;
-      }
-    }
-    return best;
+    return this.#cubesInFootprint()[0] ?? null;
   }
 
   // ---- lifecycle -------------------------------------------------------------------
@@ -226,6 +285,7 @@ export class DropLab implements Lab {
   beforePhysics(dt: number): void {
     this.#tower.beforePhysics(dt);
     this.#floors.beforePhysics();
+    this.#targets.beforePhysics();
     /*
      * The capacity gate guards EVERY landing, not only the winch's release. It used
      * to be decided solely in dropNow(), so a hand-dropped cube met whatever regime
@@ -275,7 +335,14 @@ export class DropLab implements Lab {
   }
 
   afterPhysics(): void {
+    this.#applyFraming(); // key-gated; live only while the subject falls
     this.#floors.afterPhysics();
+    if (this.#pendingDrop && this.#tower.phase === 'armed' && this.#tower.centredForDrop) {
+      this.#pendingDrop = false;
+      this.dropNow();
+    }
+    this.#targets.syncPhase(this.#tower.phase);
+    this.#targets.afterPhysics();
   }
 
   /**
@@ -283,6 +350,11 @@ export class DropLab implements Lab {
    * replay mark is stamped on the impact frame, which the recorder has just written.
    */
   onImpacts(events: readonly ImpactEvent[]): void {
+    const targetHit = this.#targets.checkImpacts(events, (id) => {
+      const e = this.#ctx.entities.get(id);
+      return e ? e.massKg : null;
+    });
+    if (targetHit === 'broke') this.#signal?.setTargetVerdict('shattered');
     /*
      * Cut the replay snapshot as soon as mark+0.6 s is recorded — NOT at the verdict.
      * The ring is 1.5 s deep and a trampoline bounce takes >2 s to settle, so a
@@ -301,7 +373,7 @@ export class DropLab implements Lab {
      * The cure is one derived key of every world fact the model reads outside the
      * signal path; the signal path already publishes per step while it runs.
      */
-    const key = `${this.#tower.phase}|${this.#cubeOnPlate() ? 1 : 0}`;
+    const key = `${this.#tower.phase}|${this.#cubeOnPlate() ? 1 : 0}|${this.#targets.selected}|${this.#targets.broken ? 1 : 0}`;
     if (key !== this.#publishedKey) this.#publish();
     const sig = this.#signal;
     if (!sig) return;
@@ -344,6 +416,21 @@ export class DropLab implements Lab {
     );
     this.#prevSpeedMps = speedNow;
 
+    /*
+     * SURVIVED is judged DURING SETTLING — before the verdict freezes. The signal
+     * deliberately never revises a done verdict (three-beat honesty), so a target
+     * verdict must be in hand at the freeze; and a feather-tap's impact event can
+     * arrive gated-late in the settle wobble, so a once-only transition check
+     * missed it (both measured, 2026-08-25). A break overwrites: last word wins
+     * pre-freeze, and nothing wins after.
+     */
+    if (
+      (state.phase === 'settling' || state.phase === 'done') &&
+      this.#targets.wasHit &&
+      !this.#targets.broken
+    ) {
+      sig.setTargetVerdict('survived');
+    }
     if (state.phase === 'done' && !this.#ccdReleased) {
       if (this.#mark && !this.#clip) {
         this.#clip = this.#ctx.replay.snapshot(this.#mark, 0.9, 0.6);
@@ -361,9 +448,13 @@ export class DropLab implements Lab {
   render(alpha: number): void {
     this.#tower.render(alpha);
     this.#floors.render(alpha);
+    this.#targets.render(alpha);
   }
 
   reset(): void {
+    this.#pendingDrop = false;
+    this.#targets.stow(); // fresh target next deploy; shards leave with the cubes
+    this.#lastFrameKey = ''; // the R-key rig reset moved the camera; re-frame from scratch
     this.#ctx.fx.decals.clear(); // marks are session history; RESET starts a new session (16 §7.5)
     // Keep floor, height, air — clearing cubes is the app's half (16 §11.8).
     this.#tower.unload();
@@ -388,6 +479,9 @@ export class DropLab implements Lab {
       this.#tower.phase === 'hoisting' ||
       this.#tower.phase === 'armed';
     if (!carrying) {
+      // Spawns land ON THE PLATFORM (2026-08-25 redesign): centre slot first, ring
+      // slots after — the plate below belongs to the floor and its target.
+      const platY = this.#tower.idleDoorPlaneY;
       const slots: readonly [number, number][] = [
         [0, 0],
         [0.15, 0],
@@ -400,7 +494,7 @@ export class DropLab implements Lab {
         [-0.15, 0.15],
       ];
       const near = [...this.#ctx.entities.all].filter(
-        (e) => Math.hypot(e.curr.p.x, e.curr.p.z) < D.plate.halfM + 0.3,
+        (e) => Math.hypot(e.curr.p.x, e.curr.p.z) < D.plate.halfM + 0.3 && e.curr.p.y > platY - 0.1,
       );
       for (const [sx, sz] of slots) {
         const clear = near.every(
@@ -408,7 +502,7 @@ export class DropLab implements Lab {
             Math.max(Math.abs(e.curr.p.x - sx), Math.abs(e.curr.p.z - sz)) >=
             e.spec.sideM / 2 + 0.075,
         );
-        if (clear) return { x: sx, y: this.#floors.topYM + 0.25, z: sz };
+        if (clear) return { x: sx, y: platY + 0.12, z: sz };
       }
     }
     const S = D.staging;
@@ -425,6 +519,7 @@ export class DropLab implements Lab {
     this.#panel = null;
     this.#tower.teardown();
     this.#floors.teardown();
+    this.#targets.teardown();
   }
 
   // ---- the panel (16 §13.1) --------------------------------------------------------
@@ -432,7 +527,7 @@ export class DropLab implements Lab {
   #publishedKey = '';
 
   #publish(): void {
-    this.#publishedKey = `${this.#tower.phase}|${this.#cubeOnPlate() ? 1 : 0}`;
+    this.#publishedKey = `${this.#tower.phase}|${this.#cubeOnPlate() ? 1 : 0}|${this.#targets.selected}|${this.#targets.broken ? 1 : 0}`;
     this.#applyFraming();
     const model = this.#model();
     if (this.#panel) this.#panel.update(model);
@@ -450,9 +545,20 @@ export class DropLab implements Lab {
   #applyFraming(): void {
     const phase = this.#tower.phase;
     const carrying = phase === 'loading' || phase === 'hoisting' || phase === 'armed';
+    /*
+     * FALLING frames the whole drop, live: plate to the subject cube, following it
+     * down — "when I increase the tower height and drop a cube, the drop is not
+     * shown" (user, 2026-08-25). The rig's damped goal-chase smooths the ride, and
+     * the view hands over to the landing zone as the cube arrives.
+     */
+    const subject = this.#subjectId !== null ? this.#ctx.entities.get(this.#subjectId) : null;
+    const falling = this.#signal?.state?.phase === 'falling' && subject !== null;
     let key: string;
     let topM = 0;
-    if (carrying) {
+    if (falling && subject) {
+      topM = Math.max(subject.curr.p.y + subject.spec.sideM, 1.6);
+      key = `fall:${(Math.round(topM * 4) / 4).toFixed(2)}`;
+    } else if (carrying) {
       // The carriage stands ~0.95 m over its door plane; +1.15 covers the spreader.
       topM = Math.min(this.#floors.topYM + this.#tower.targetHM + 1.15, 6.5);
       key = `carry:${topM.toFixed(1)}`;
@@ -461,12 +567,16 @@ export class DropLab implements Lab {
     }
     if (key === this.#lastFrameKey) return;
     this.#lastFrameKey = key;
-    if (carrying) {
+    if (falling) {
+      this.#ctx.camera.frameRadius((topM / 2) * 1.08, { fit: 'subject', centreYM: topM / 2 });
+    } else if (carrying) {
       this.#ctx.camera.frameRadius((topM / 2) * 1.08, { fit: 'subject', centreYM: topM / 2 });
     } else {
       this.#ctx.camera.frameRadius(D.camera.radiusM, {
         fit: 'subject',
         centreYM: D.camera.centreYM,
+        elevationDeg: 16, // low shot: a cube on the platform reads in silhouette
+        azimuthDeg: -15, // past the sign side: mast off the cube's backdrop AND the placard face-on
       });
     }
   }
@@ -542,6 +652,18 @@ export class DropLab implements Lab {
           this.#publish();
         },
       },
+      ...(this.#floors.active === 'steel'
+        ? [
+            {
+              id: 'target',
+              label: 'TARGET',
+              kind: 'segmented',
+              options: TARGET_IDS.map((id) => ({ id, label: TARGET_LABELS[id] })),
+              value: this.#targets.selected,
+              onChange: (id: string) => this.setTarget(id as TargetId),
+            } as const,
+          ]
+        : []),
     ];
 
     const busy = phase === 'falling' || phase === 'settling';
@@ -563,10 +685,8 @@ export class DropLab implements Lab {
         onSelect: () => this.hoist(),
       });
     }
-    if (this.#mark && phase === 'done') {
-      actions.push({ id: 'replay', label: 'REPLAY', onSelect: () => this.playReplay() });
-    }
-    actions.push({ id: 'share', label: 'SHARE', onSelect: () => this.#ctx.ui.share() });
+    // REPLAY and SHARE left the panel on 2026-08-25 (user: "remove share and replay
+    // functionality that doesn't make sense for now") — the plumbing stays dormant.
     actions.push({ id: 'reset', label: 'RESET', onSelect: () => this.#ctx.ui.resetLab() });
 
     return {
@@ -575,6 +695,15 @@ export class DropLab implements Lab {
       status: { text: statusText, tone },
       ...(primary ? { primary } : {}),
       facts: [
+        ...(this.#targets.selected !== 'none'
+          ? [
+              {
+                k: 'TARGET',
+                v: TARGET_LABELS[this.#targets.selected],
+                v2: this.#targets.broken ? 'shattered' : 'breaks ≈ 1 J',
+              },
+            ]
+          : []),
         ...(cargoN > 1
           ? [{ k: 'CARGO', v: `${cargoN} cubes`, v2: mass(cargoKg, units).primary }]
           : []),

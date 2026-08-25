@@ -404,6 +404,8 @@ export class App implements Stepper {
     this.hand.release('cancel');
     this.#select(null);
     this.entities.clear();
+    // One lab's chosen camera angle must not leak into the next (user, 2026-08-25).
+    this.rig.resetOrientation();
     await this.labs.switchTo(lab);
     // Only if THIS switch is the one that landed — a quicker switch to a third lab may
     // have won the race — and only if the lab WANTS a starter cube (Lab.spawnOnEntry):
@@ -419,8 +421,11 @@ export class App implements Stepper {
     this.entities.clear();
     // Clearing the player's cubes does not touch a tare offset, a settled reading, or a
     // beam left against its stop. The lab owns that state and has to be told (15 §8.1).
-    this.labs.reset();
+    // Rig first, lab second: the lab's own framing must land LAST, or RESET leaves
+    // a cube-sized view instead of the boot view (user-caught, 2026-08-25). Labs
+    // without their own framing (Sandbox) keep the rig's cube reset as before.
     this.rig.reset(this.spec.sideM);
+    this.labs.reset();
     if (this.labs.active?.spawnOnEntry) this.spawn();
   }
 

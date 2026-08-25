@@ -786,7 +786,13 @@ export const config = {
        * The CABLE END's rest height (17 §3): the carriage hangs 0.89 m below it, so
        * at rest the open bay floats with its door plane ~0.46 m over the plate.
        */
-      restCableEndYM: 1.35,
+      /**
+       * Redesigned 2026-08-25 (user): the carriage IDLES RAISED AND CLOSED — its
+       * floor is the loading platform. Spawns land on it, HOIST goes straight up,
+       * and the whole descend-and-capture phase is gone. Idle door plane 0.85 m
+       * clears the tallest target (0.45) with spawn headroom.
+       */
+      restCableEndYM: 1.74,
       /** The capture nudge (17 §3.3): the cube rises this much so the doors can close under it. */
       clampGapM: 0.006,
       /** How fast a carried cube slerps level after the clamp (1/s). */
@@ -821,7 +827,7 @@ export const config = {
     /** Where spawned cubes stage, in front of the plate (16 §5.4). */
     staging: { zM: 0.55, rowHalfM: 0.42, gapM: 0.02 },
     /** 16 §5.1: frame the landing zone; the tower rises out of frame by design. */
-    camera: { radiusM: 1.3, centreYM: 0.45 },
+    camera: { radiusM: 0.9, centreYM: 0.66 }, // low platform-first idle shot (user, 2026-08-25)
     /*
      * The capacity gates (16 §7.3 amendment): past ½mv², the mat is already beaten
      * and the landing goes to the rigid crushed-mat regime. Trampoline: above the

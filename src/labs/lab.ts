@@ -34,7 +34,13 @@ export interface LabContext {
   camera: {
     frameRadius(
       radiusM: number,
-      opts?: { fit?: 'stage' | 'subject'; centreYM?: number; margin?: number },
+      opts?: {
+        fit?: 'stage' | 'subject';
+        centreYM?: number;
+        margin?: number;
+        elevationDeg?: number;
+        azimuthDeg?: number;
+      },
     ): void;
   };
   /**

@@ -324,6 +324,7 @@ export class PhysicsWorld {
       halfExtent: Number.isFinite(smallestHalf) ? smallestHalf : 0.05,
       ccd: spec.ccd ?? false,
       parts: spec.parts,
+      ...(spec.entityId !== undefined ? { entityId: spec.entityId } : {}),
       // Every part names a surface, and the impact bus reports one partner material, so
       // the first part's is what it speaks for. Instruments are single-material in
       // practice (a steel balance, an aluminium scale); if that stops being true this is
@@ -1237,13 +1238,21 @@ export class PhysicsWorld {
        */
       const aIsDyn = a.body.isDynamic();
       const bIsDyn = b.body.isDynamic();
+      // When BOTH carry an entityId — a cube striking a breakable prop (18 §5.1) —
+      // the LOWER id is the subject: cubes are small ints, props are ≥ 1,000,000.
       const aPrimary =
-        aIsDyn && bIsDyn ? a.entityId !== undefined || b.entityId === undefined : aIsDyn;
+        aIsDyn && bIsDyn
+          ? a.entityId !== undefined && b.entityId !== undefined
+            ? a.entityId < b.entityId
+            : a.entityId !== undefined || b.entityId === undefined
+          : aIsDyn;
       const primary = aPrimary ? a : b;
       const partner = aPrimary ? b : a;
       out.push({
         a: primary.entityId ?? -1,
-        b: partner.surface ?? partner.entityId ?? -1,
+        // Id BEFORE surface: a prop with both must be nameable (18 §5.1); nothing
+        // else carries both, so pads and statics report their SurfaceId as ever.
+        b: partner.entityId ?? partner.surface ?? -1,
         point: contact.point,
         normalSpeedMps,
         energyJ,
