@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { config } from '../../src/config.ts';
 import { DropLab } from '../../src/labs/drop/index.ts';
+import { __setCrushAssetsForTests } from '../../src/labs/drop/asset.ts';
+import type { CrushAssets, FragChunk } from '../../src/labs/drop/asset.ts';
 import { PhysicsWorld } from '../../src/core/physics.ts';
 import type { Entity } from '../../src/core/entities.ts';
 import type { LabContext } from '../../src/labs/lab.ts';
@@ -90,7 +92,13 @@ class Rig {
       fx: {
         play: () => undefined,
         haptic: () => undefined,
-        decals: { setTarget: () => undefined, clear: () => undefined },
+        particles: () => undefined,
+        decals: {
+          setTarget: () => undefined,
+          setSplatTarget: () => undefined,
+          splat: () => undefined,
+          clear: () => undefined,
+        },
       },
       replay: {
         track: () => undefined,
@@ -402,5 +410,138 @@ describe('C1 — the wine glass on the tower (18 §6)', () => {
     expect(rig.lab.targetId, 'and refuse a new one').toBe('none');
     rig.lab.teardown();
     rig.pw.free();
+  }, 120_000);
+});
+
+describe('C2 — the watermelon (18 §6)', () => {
+  it('survives a light tap, then BURSTS past 40 J into halves, chunks, and a SPLAT', async () => {
+    const under = await rigWithStage();
+    under.lab.setTarget('watermelon');
+    under.run(0.2);
+    fullDrop(under, 'W', 2, 0.6); // ~6 J at the rind — a bruise, not a burst
+    under.run(0.1);
+    expect(under.lab.state!.verdict).toBe('survived');
+    under.lab.teardown();
+    under.pw.free();
+
+    const over = await rigWithStage();
+    over.lab.setTarget('watermelon');
+    over.run(0.2);
+    const b0 = over.pw.bodyCount; // includes platform + melon
+    fullDrop(over, 'W', 2, 2.5); // ~51 J of arrival — the hero moment (top is at 0.34)
+    over.run(0.1);
+    expect(over.lab.state!.verdict).toBe('splat');
+    // Melon gone; cube + ten fallback chunks remain — headless has no GLBs, so the
+    // fracture-fragment path is the browser's; platform away with the winch;
+    // tolerate a culled escapee or two.
+    expect(over.pw.bodyCount).toBeGreaterThanOrEqual(b0 - 1 - 1 + 1 + 8);
+    expect(over.pw.bodyCount).toBeLessThanOrEqual(b0 - 1 - 1 + 1 + 10);
+    over.lab.teardown();
+    over.pw.free();
+  }, 120_000);
+
+  it('deploys flat on the plate — no pedestal for the hero', async () => {
+    const rig = await rigWithStage();
+    const base = rig.pw.bodyCount;
+    rig.lab.setTarget('watermelon');
+    rig.run(0.2);
+    expect(rig.pw.bodyCount).toBe(base + 1);
+    rig.lab.setTarget('none');
+    rig.run(0.1);
+    expect(rig.pw.bodyCount).toBe(base);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+/**
+ * C2.2 — burst REGIMES (realism audit 2026-08-25). The audit measured every burst
+ * as the same uniform evacuation: bbox colliders inter-penetrated at spawn and the
+ * solver's depenetration shove (~2+ m/s at ANY energy) drowned the authored kick.
+ * These pins hold the two regimes apart on the SHIPPING fragment path — synthetic
+ * fragments injected where GLTFLoader cannot run.
+ */
+describe('C2.2 — burst regimes (18 §6, audit)', () => {
+  /** A 3×2×2 grid of hull chunks standing in for the melon's 12 Voronoi pieces. */
+  function syntheticMelonAssets(): CrushAssets {
+    const frags: FragChunk[] = [];
+    for (const x of [-0.1, 0, 0.1]) {
+      for (const y of [0.08, 0.24]) {
+        for (const z of [-0.075, 0.075]) {
+          const half = { x: 0.05, y: 0.075, z: 0.07 };
+          const points: number[] = [];
+          for (const sx of [-1, 1])
+            for (const sy of [-1, 1])
+              for (const sz of [-1, 1]) points.push(sx * half.x, sy * half.y, sz * half.z);
+          frags.push({ offset: { x, y, z }, half, points, visual: new THREE.Group() });
+        }
+      }
+    }
+    return {
+      glass: new THREE.Group(),
+      pedestal: new THREE.Group(),
+      melonFull: new THREE.Group(),
+      melonFrags: frags,
+      glassFrags: [],
+    };
+  }
+
+  function burstPieces(rig: Rig, before: ReadonlySet<number>): { r: number; y: number }[] {
+    const cubes = new Set([...rig.store.all].map((e) => e.body));
+    return [...rig.pw.allBodies()]
+      .filter((b) => !before.has(b) && !cubes.has(b) && rig.pw.bodyKindOf(b) === 'dynamic')
+      .map((b) => {
+        const t = rig.pw.transformOf(b);
+        return { r: Math.hypot(t.p.x, t.p.z), y: t.p.y };
+      });
+  }
+
+  it('just-over CRACKS OPEN in place: pieces sag around the crater, cube nests on the wreck', async () => {
+    __setCrushAssetsForTests(syntheticMelonAssets());
+    try {
+      const rig = await rigWithStage();
+      rig.lab.setTarget('watermelon');
+      rig.run(0.3); // deploy…
+      await Promise.resolve(); // …and flush the loader's microtask so the cache lands
+      const before = new Set(rig.pw.allBodies());
+      fullDrop(rig, 'W', 2, 2.6); // ~53 J arrival, ~13 J excess — kick ≈ 0.4 m/s
+      rig.run(1.5);
+      expect(rig.lab.state!.verdict).toBe('splat');
+      const pieces = burstPieces(rig, before);
+      expect(pieces.length, 'nothing pulped, nothing culled').toBe(12);
+      const near = pieces.filter((p) => p.r < 0.55).length;
+      expect(near, 'a crack-open stays at the crater').toBeGreaterThanOrEqual(9);
+      expect(Math.max(...pieces.map((p) => p.r))).toBeLessThan(1.2);
+      rig.lab.teardown();
+      rig.pw.free();
+    } finally {
+      __setCrushAssetsForTests(null);
+    }
+  }, 120_000);
+
+  it('a massive hit SPRAYS flat and wide, pulps the core, and the cube punches to the plate', async () => {
+    __setCrushAssetsForTests(syntheticMelonAssets());
+    try {
+      const rig = await rigWithStage();
+      rig.lab.setTarget('watermelon');
+      rig.run(0.3);
+      await Promise.resolve(); // flush the loader's microtask so the cache lands
+      const before = new Set(rig.pw.allBodies());
+      fullDrop(rig, 'W', 6, 2.5); // ~1.3 kJ arrival — kick ≈ 4.3 m/s, 4 pieces pulped
+      rig.run(2.0);
+      expect(rig.lab.state!.verdict).toBe('splat');
+      const pieces = burstPieces(rig, before);
+      expect(pieces.length, '12 minus 4 pulped to juice, none culled').toBe(8);
+      const radii = pieces.map((p) => p.r);
+      expect(Math.max(...radii), 'sprayed wide').toBeGreaterThan(0.8);
+      expect(Math.max(...radii), 'wet drag keeps it inside the world').toBeLessThan(2.9);
+      // The pulped core is why the cube reaches the plate instead of perching.
+      const cube = [...rig.store.all][0]!;
+      expect(cube.curr.p.y, 'cube on the plate in the pancake').toBeLessThan(0.14);
+      rig.lab.teardown();
+      rig.pw.free();
+    } finally {
+      __setCrushAssetsForTests(null);
+    }
   }, 120_000);
 });

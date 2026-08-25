@@ -45,3 +45,17 @@ js['nodes'].append({'name': 'pedestal_root', 'children': old_roots, 'scale': [S,
 scene['nodes'] = [len(js['nodes']) - 1]
 write_glb('public/pedestal.glb', js, binbuf)
 print('pedestal.glb wrapped: scale %.5f -> H 0.228, half-width %.3f' % (S, 4.7004 * S))
+
+
+# Watermelon: the model ships Watermelon_Full + authored Half_Left/Half_Right break
+# pieces. The FULL melon alone composes to 0.23 x 0.23 x 0.30 m with its belly at
+# y = 0 (the union bbox lied - the halves are laid out BESIDE the full and inflated
+# it; measure the part you ship). Wrap 1.4x for a proper 32 x 32 x 42 cm watermelon.
+js, binbuf = read_glb('assets-lib/watermelon/watermelon_fruit_3d_model.glb')
+S = 1.4
+scene = js['scenes'][js.get('scene', 0)]
+old_roots = scene['nodes']
+js['nodes'].append({'name': 'melon_root', 'children': old_roots, 'scale': [S, S, S]})
+scene['nodes'] = [len(js['nodes']) - 1]
+write_glb('public/watermelon.glb', js, binbuf)
+print('watermelon.glb wrapped: scale %.2f -> full melon ~0.32 x 0.32 x 0.42 m, belly at y=0' % S)

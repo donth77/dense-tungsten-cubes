@@ -127,6 +127,22 @@ export const SURFACES: Readonly<Record<SurfaceId, SurfaceSpec>> = {
     metalness: 0,
   },
   /*
+   * Wet fracture flesh (18 §6 C2 realism audit): a burst watermelon's pieces. Wet
+   * pulp is dead on landing — the audit measured oak-pair pieces skipping clean off
+   * the plate — so restitution is the floor of the table, and it lands with the wet
+   * voice, not a knock.
+   */
+  pulp: {
+    id: 'pulp',
+    label: 'Pulp',
+    friction: 0.7,
+    restitution: 0.03,
+    voice: 'splat_melon',
+    baseColorLinear: [0.32, 0.05, 0.05],
+    roughness: 0.95,
+    metalness: 0,
+  },
+  /*
    * The trampoline FABRIC, not the trampoline: the mat's throw comes from the membrane
    * contact (a 1.5 kg mat is a wall to a 44 g cube), while the travel and the capacity
    * gate defeat heavy cubes (16 §7.3 amendment). 0.85 is the vs-reference-metal pair

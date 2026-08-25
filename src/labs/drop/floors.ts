@@ -171,6 +171,8 @@ export class Floors {
       mesh.receiveShadow = true;
       this.ctx.scene.add(mesh);
       this.#meshes.push(mesh);
+      // Any rigid plate takes juice splats — mess, not damage (18 §6 C2).
+      this.ctx.fx.decals.setSplatTarget(mesh);
       /*
        * The rim frame that makes the plate READ as the landing zone. Concrete on the
        * concrete stage was literally invisible in the screenshot review (2026-08-24)
@@ -214,6 +216,7 @@ export class Floors {
 
   #unmount(): void {
     this.ctx.fx.decals.setTarget(null, null);
+    this.ctx.fx.decals.setSplatTarget(null);
     this.#gen++;
     this.#props.clear();
     this.#pad?.teardown();

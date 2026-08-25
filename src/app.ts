@@ -166,8 +166,15 @@ export class App implements Stepper {
       fx: {
         play: (voice, gain, rate) => this.audio.play(voice, gain, rate),
         haptic: (s) => hapticImpact(s),
+        particles: (at, spec) =>
+          this.puffs.emit(at, spec, {
+            lowTier: this.render.resolutionScale < 1,
+            reducedMotion: this.rig.reducedMotion,
+          }),
         decals: {
           setTarget: (mesh, floor) => this.decals.setTarget(mesh as never, floor),
+          setSplatTarget: (mesh) => this.decals.setSplatTarget(mesh as never),
+          splat: (at, rM) => this.decals.splat(at, rM),
           clear: () => this.decals.clear(),
         },
       },

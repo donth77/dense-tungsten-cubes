@@ -250,7 +250,7 @@ class ColliderOverlay {
   }
 }
 
-/** A drawable stand-in for a collider shape. Cylinders are drawn as their bounding box. */
+/** A drawable stand-in for a collider shape. Cylinders and hulls draw their bounding box. */
 function boxGeometryFor(shape: PartShape): THREE.BoxGeometry | null {
   switch (shape.kind) {
     case 'box':
@@ -260,6 +260,17 @@ function boxGeometryFor(shape: PartShape): THREE.BoxGeometry | null {
     }
     case 'cylinder':
       return new THREE.BoxGeometry(shape.radiusM * 2, shape.halfHeightM * 2, shape.radiusM * 2);
+    case 'convexHull': {
+      let mx = 0.004,
+        my = 0.004,
+        mz = 0.004;
+      for (let i = 0; i + 2 < shape.points.length; i += 3) {
+        mx = Math.max(mx, Math.abs(shape.points[i]!));
+        my = Math.max(my, Math.abs(shape.points[i + 1]!));
+        mz = Math.max(mz, Math.abs(shape.points[i + 2]!));
+      }
+      return new THREE.BoxGeometry(mx * 2, my * 2, mz * 2);
+    }
   }
 }
 

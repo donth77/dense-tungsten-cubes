@@ -126,6 +126,19 @@ interface JointRec {
   bodyB: BodyHandle;
 }
 
+/** Axis-aligned bbox half-extents of a point cloud (hull shapes have no declared size). */
+function pointsBBoxHalf(points: readonly number[]): Vec3 {
+  let mx = 0,
+    my = 0,
+    mz = 0;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    mx = Math.max(mx, Math.abs(points[i]!));
+    my = Math.max(my, Math.abs(points[i + 1]!));
+    mz = Math.max(mz, Math.abs(points[i + 2]!));
+  }
+  return { x: Math.max(0.004, mx), y: Math.max(0.004, my), z: Math.max(0.004, mz) };
+}
+
 /** The smallest half-extent of a shape — a body's own CCD sweep threshold. */
 function minHalfExtent(shape: PartShape): number {
   switch (shape.kind) {
@@ -134,6 +147,10 @@ function minHalfExtent(shape: PartShape): number {
       return Math.min(shape.halfExtents.x, shape.halfExtents.y, shape.halfExtents.z);
     case 'cylinder':
       return Math.min(shape.halfHeightM, shape.radiusM);
+    case 'convexHull': {
+      const h = pointsBBoxHalf(shape.points);
+      return Math.min(h.x, h.y, h.z);
+    }
   }
 }
 
@@ -160,6 +177,10 @@ function partVolume(shape: PartShape): number {
     }
     case 'cylinder':
       return Math.PI * shape.radiusM * shape.radiusM * 2 * shape.halfHeightM;
+    case 'convexHull':
+      // Never used: a hull's true volume is the engine's to compute, so #createPart
+      // hands a hull part's mass over via setMass instead of a density.
+      return 0;
   }
 }
 
@@ -311,6 +332,8 @@ export class PhysicsWorld {
           : RAPIER.RigidBodyDesc.dynamic();
     desc.setTranslation(spec.at.x, spec.at.y, spec.at.z);
     if (spec.kind === 'dynamic') desc.setCcdEnabled(spec.ccd ?? false);
+    if (spec.linearDamping !== undefined) desc.setLinearDamping(spec.linearDamping);
+    if (spec.angularDamping !== undefined) desc.setAngularDamping(spec.angularDamping);
     if (spec.additionalSolverIterations) {
       desc.setAdditionalSolverIterations(spec.additionalSolverIterations);
     }
@@ -355,6 +378,17 @@ export class PhysicsWorld {
       case 'cylinder':
         cd = RAPIER.ColliderDesc.cylinder(shape.halfHeightM, shape.radiusM);
         break;
+      case 'convexHull': {
+        // Rapier computes the hull; a degenerate cloud (coplanar sliver) returns null
+        // and falls back to the cloud's bbox so a fracture never crashes a burst.
+        const hull = RAPIER.ColliderDesc.convexHull(Float32Array.from(shape.points));
+        if (hull) cd = hull;
+        else {
+          const h = pointsBBoxHalf(shape.points);
+          cd = RAPIER.ColliderDesc.cuboid(h.x, h.y, h.z);
+        }
+        break;
+      }
     }
 
     const surf = SURFACES[part.material];
@@ -368,8 +402,14 @@ export class PhysicsWorld {
     if (part.at) cd.setTranslation(part.at.x, part.at.y, part.at.z);
     if (part.rotation) cd.setRotation(part.rotation);
     if (part.massKg !== undefined) {
-      const v = partVolume(shape);
-      cd.setDensity(v > 0 ? part.massKg / v : 0);
+      if (shape.kind === 'convexHull') {
+        // A hull's true volume lives on the engine's side of the firewall — hand the
+        // mass over directly and let Rapier derive inertia from the hull it built.
+        cd.setMass(part.massKg);
+      } else {
+        const v = partVolume(shape);
+        cd.setDensity(v > 0 ? part.massKg / v : 0);
+      }
     }
     return this.#world.createCollider(cd, body);
   }

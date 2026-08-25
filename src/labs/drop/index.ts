@@ -354,7 +354,7 @@ export class DropLab implements Lab {
       const e = this.#ctx.entities.get(id);
       return e ? e.massKg : null;
     });
-    if (targetHit === 'broke') this.#signal?.setTargetVerdict('shattered');
+    if (targetHit === 'broke') this.#signal?.setTargetVerdict(this.#targets.breakVerdict);
     /*
      * Cut the replay snapshot as soon as mark+0.6 s is recorded — NOT at the verdict.
      * The ring is 1.5 s deep and a trampoline bounce takes >2 s to settle, so a
@@ -700,7 +700,9 @@ export class DropLab implements Lab {
               {
                 k: 'TARGET',
                 v: TARGET_LABELS[this.#targets.selected],
-                v2: this.#targets.broken ? 'shattered' : 'breaks ≈ 1 J',
+                v2: this.#targets.broken
+                  ? VERDICT_LABEL[this.#targets.breakVerdict].toLowerCase()
+                  : `breaks ≈ ${this.#targets.thresholdJ} J`,
               },
             ]
           : []),

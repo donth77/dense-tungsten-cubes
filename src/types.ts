@@ -9,7 +9,7 @@
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
 export type SurfaceId =
-  'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice' | 'sand' | 'trampoline';
+  'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice' | 'sand' | 'trampoline' | 'pulp';
 
 /**
  * What a rigid body IS to the solver. Most bodies are born and die in one kind; the
@@ -63,12 +63,18 @@ export type JointHandle = number & { readonly [JointHandleBrand]: never };
  * Deliberately a small closed set rather than a pass-through of Rapier's collider
  * vocabulary: the firewall is only worth having if the descriptor on this side of it is
  * engine-independent. A balance beam, a pan, a scale housing and a platter are all
- * expressible with these three.
+ * expressible with the first three. `convexHull` joined for fracture fragments
+ * (18 §6 C2 realism audit): a Voronoi cell's bounding BOX overlaps its neighbours'
+ * at spawn — the solver's depenetration shove out-kicked the authored burst at every
+ * energy — and lies about the rest pose (wedges balanced on edge). The hull is the
+ * cell: cells partition the body, so hulls spawn touching, never penetrating.
  */
 export type PartShape =
   | { kind: 'box'; halfExtents: Vec3 }
   | { kind: 'roundedBox'; halfExtents: Vec3; borderRadiusM: number }
-  | { kind: 'cylinder'; halfHeightM: number; radiusM: number };
+  | { kind: 'cylinder'; halfHeightM: number; radiusM: number }
+  /** Body-local xyz triples. The engine computes the hull; degenerate sets fall back to a box. */
+  | { kind: 'convexHull'; points: readonly number[] };
 
 /** One collider inside a compound body, posed in the body's local frame. */
 export interface ColliderPart {
@@ -121,6 +127,13 @@ export interface CompoundBodySpec {
    * so this exists to be left alone unless a sweep says otherwise (15 §7.3).
    */
   additionalSolverIterations?: number;
+  /**
+   * Rapier's implicit damping — the STABLE way to bleed speed (the W2 lesson: hand-
+   * applied drag forces need `c·dt/m < 2`; implicit damping never explodes). Wet
+   * fracture pieces use it as squeeze-flow drag: pulp sprays fast and dies fast.
+   */
+  linearDamping?: number;
+  angularDamping?: number;
 }
 
 export interface RevoluteJointSpec {

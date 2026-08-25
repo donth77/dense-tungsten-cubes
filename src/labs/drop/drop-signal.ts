@@ -26,6 +26,7 @@ export type DropVerdict =
   | 'hit-a-cube'
   | 'off-the-plate'
   | 'shattered'
+  | 'splat'
   | 'survived';
 
 export interface DropSample {

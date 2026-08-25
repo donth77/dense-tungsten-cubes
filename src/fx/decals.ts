@@ -91,9 +91,41 @@ function canvasFor(kind: DecalKind): HTMLCanvasElement {
   return cv;
 }
 
+function splatCanvas(): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  if (!c) return cv;
+  // Juice: an irregular dark-red blot with satellite droplets.
+  const cx = 64;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const r = 24 + 18 * Math.abs(Math.sin(i * 2.3));
+    c.fillStyle = 'rgba(140, 28, 32, 0.55)';
+    c.beginPath();
+    c.arc(cx + Math.cos(a) * r * 0.45, cx + Math.sin(a) * r * 0.45, r * 0.6, 0, Math.PI * 2);
+    c.fill();
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = i * 2.4;
+    const d = 38 + (i % 5) * 5;
+    c.fillStyle = 'rgba(150, 32, 36, 0.5)';
+    c.beginPath();
+    c.arc(cx + Math.cos(a) * d, cx + Math.sin(a) * d, 3 + (i % 3) * 2, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.fillStyle = 'rgba(120, 20, 24, 0.7)';
+  c.beginPath();
+  c.arc(cx, cx, 20, 0, Math.PI * 2);
+  c.fill();
+  return cv;
+}
+
 export class DecalSystem {
   readonly #scene: THREE.Scene;
   #target: THREE.Mesh | null = null;
+  #splatTarget: THREE.Mesh | null = null;
+  #splatMat: THREE.MeshStandardMaterial | null = null;
   #floor: DecalFloor | null = null;
   readonly #marks: THREE.Mesh[] = [];
   readonly #mats = new Map<DecalKind, THREE.MeshStandardMaterial>();
@@ -121,6 +153,51 @@ export class DecalSystem {
       this.#mats.set(kind, m);
     }
     return m;
+  }
+
+  /**
+   * Juice splats are their own channel (18 §6 C2): ANY floor may take one — a splat
+   * is mess, not damage, so it needs no material-specific size law.
+   */
+  setSplatTarget(mesh: THREE.Mesh | null): void {
+    this.#splatTarget = mesh;
+  }
+
+  splat(at: { x: number; y: number; z: number }, rM: number): void {
+    if (!this.#splatTarget) return;
+    this.#splatMat ??= (() => {
+      const tx = new THREE.CanvasTexture(splatCanvas());
+      tx.colorSpace = THREE.SRGBColorSpace;
+      const m = new THREE.MeshStandardMaterial({
+        map: tx,
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        roughness: 0.35,
+        metalness: 0,
+      });
+      return m;
+    })();
+    this.#seq += 1;
+    const spin = (this.#seq * 2.399963) % (Math.PI * 2);
+    const geo = new DecalGeometry(
+      this.#splatTarget,
+      new THREE.Vector3(at.x, at.y, at.z),
+      new THREE.Euler(-Math.PI / 2, 0, spin),
+      new THREE.Vector3(rM * 2, rM * 2, 0.05),
+    );
+    const mesh = new THREE.Mesh(geo, this.#splatMat);
+    mesh.renderOrder = 1;
+    this.#scene.add(mesh);
+    this.#marks.push(mesh);
+    while (this.#marks.length > config.fx.decals.cap) {
+      const oldMark = this.#marks.shift();
+      if (oldMark) {
+        oldMark.removeFromParent();
+        oldMark.geometry.dispose();
+      }
+    }
   }
 
   /** The Drop plate registers itself on mount; `null` (or a new mesh) clears marks. */
@@ -174,6 +251,8 @@ export class DecalSystem {
 
   dispose(): void {
     this.clear();
+    this.#splatMat?.map?.dispose();
+    this.#splatMat?.dispose();
     for (const m of this.#mats.values()) {
       m.map?.dispose();
       m.dispose();

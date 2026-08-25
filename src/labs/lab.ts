@@ -9,6 +9,7 @@ export type { LabId } from '../types.ts';
 import type { ReplayClip, ReplayMark } from '../core/replay.ts';
 import type { SurfaceId } from '../types.ts';
 import type { VoiceId } from '../fx/audio.ts';
+import type { BurstSpec } from '../fx/particles.ts';
 
 /**
  * The lab contract (05, 08 §9).
@@ -58,12 +59,20 @@ export interface LabContext {
     play(voice: VoiceId, gain?: number, rate?: number): void;
     haptic(intensity01: number): void;
     /**
+     * A lab-authored particle burst (juice, glass glints) through the shared pool.
+     * Recipes are pure functions in `fx/particles.ts` — labs pick one, never invent
+     * numbers inline.
+     */
+    particles(at: Vec3, spec: BurstSpec): void;
+    /**
      * Floor-mark registration (16 §10.3): the Drop plate offers its top face as the
      * decal target on mount; `setTarget(null, null)` (or any re-target) clears the
      * marks. Labs that never register get no marks — the default is silence.
      */
     decals: {
       setTarget(mesh: unknown, floor: 'concrete' | 'oak' | 'sand' | null): void;
+      setSplatTarget(mesh: unknown): void;
+      splat(at: Vec3, rM: number): void;
       clear(): void;
     };
   };

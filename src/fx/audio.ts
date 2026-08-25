@@ -33,7 +33,8 @@ export type VoiceId =
   | 'thump_sand'
   | 'boing_trampoline'
   | 'clack_hook'
-  | 'tinkle_glass';
+  | 'tinkle_glass'
+  | 'splat_melon';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -231,14 +232,29 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
    * The wine glass's death (18 §5.3): a bright inharmonic tinkle cluster, played by
    * the lab at the shard swap — never by the impact bus.
    */
+  /* Fattened 2026-08-25 — the first cut rendered thin next to the landing thud
+   * and the user could not pick it out. */
   tinkle_glass: {
     freq: 2950,
     partials: [1, 1.51, 2.32, 3.17],
-    decayS: 0.45,
-    noise: 0.35,
-    noiseHz: 5600,
-    noiseDecayS: 0.05,
-    noiseQ: 2.2,
+    decayS: 0.65,
+    noise: 0.6,
+    noiseHz: 5200,
+    noiseDecayS: 0.09,
+    noiseQ: 1.6,
+  },
+  /* The hero's death (18 §6 C2): a wet, low burst — mostly noise, a soft body
+   * thump underneath, over fast. Nothing metallic about it. */
+  splat_melon: {
+    freq: 210,
+    partials: [1, 1.43, 2.18],
+    decayS: 0.16,
+    noise: 0.85,
+    noiseHz: 850,
+    noiseDecayS: 0.14,
+    noiseQ: 0.7,
+    thump: 0.5,
+    thumpHz: 85,
   },
 };
 

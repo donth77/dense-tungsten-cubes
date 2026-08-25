@@ -73,6 +73,40 @@ export function burstSpec(surface: SurfaceId, s: number, energyJ: number): Burst
   }
 }
 
+/**
+ * Watermelon juice (18 §6 C2 realism audit). A melon is ~92% water in a shell:
+ * as the cube-plate gap closes the flesh must escape SIDEWAYS — squeeze-flow — so
+ * the spray is fast, flat and radial, and it scales with the energy the rind
+ * couldn't absorb. This is the fluid: particles for the flight, decals for the
+ * landing. A real solver-coupled fluid would cost the frame budget and Rapier has
+ * none; this is the honest cartoon of the real mechanism.
+ */
+export function juiceSpec(excessJ: number): BurstSpec {
+  return {
+    count: Math.min(90, Math.round(24 + excessJ * 0.06)),
+    lifeS: 0.9,
+    color: [0.5, 0.05, 0.06],
+    vMin: 0.8,
+    vMax: Math.min(7, 1.5 + Math.sqrt(Math.max(0, excessJ)) * 0.16),
+    up: 0.3,
+  };
+}
+
+/**
+ * Fine glass debris at heavy overkill — real fragmentation multiplies with energy,
+ * and ten rigid shards can't show it; a short-lived glitter cloud can.
+ */
+export function glintSpec(excessJ: number): BurstSpec {
+  return {
+    count: Math.min(40, Math.round(10 + excessJ * 0.03)),
+    lifeS: 0.5,
+    color: [0.85, 0.92, 1],
+    vMin: 1,
+    vMax: Math.min(5, 1 + Math.sqrt(Math.max(0, excessJ)) * 0.12),
+    up: 0.45,
+  };
+}
+
 const POOL = 256;
 
 export class ImpactPuffs {
@@ -127,6 +161,15 @@ export class ImpactPuffs {
   ): void {
     const spec = burstSpec(surface, s, energyJ);
     if (!spec) return;
+    this.emit(at, spec, opts);
+  }
+
+  /** Direct emission for lab-authored bursts (juice, glints) — same pool, same laws. */
+  emit(
+    at: { x: number; y: number; z: number },
+    spec: BurstSpec,
+    opts: { lowTier: boolean; reducedMotion: boolean },
+  ): void {
     let n = spec.count;
     if (opts.lowTier) n = Math.ceil(n / 4); // low tier quarters counts (16 §10.2)
     if (opts.reducedMotion) n = Math.ceil(n / 2); // particles are not camera motion

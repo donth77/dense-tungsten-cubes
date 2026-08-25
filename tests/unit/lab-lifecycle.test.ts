@@ -32,7 +32,13 @@ function ctx(): LabContext {
     fx: {
       play: () => undefined,
       haptic: () => undefined,
-      decals: { setTarget: () => undefined, clear: () => undefined },
+      particles: () => undefined,
+      decals: {
+        setTarget: () => undefined,
+        setSplatTarget: () => undefined,
+        splat: () => undefined,
+        clear: () => undefined,
+      },
     },
     replay: {
       track: () => undefined,
