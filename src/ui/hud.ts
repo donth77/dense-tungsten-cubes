@@ -71,6 +71,7 @@ export class Hud {
     this.meter = new ForceMeter();
     this.pressRing = new PressRing();
     this.labPanel = el('div.labpanel');
+    this.#replayBar = el('div.replaybar', { role: 'region', 'aria-label': 'Replay' });
 
     this.#unitsBtn = button('KG', () => this.settings.toggleUnits(), {
       class: 'iconbtn text',
@@ -323,6 +324,64 @@ export class Hud {
   }
 
   #panelView: LabPanel | null = null;
+  readonly #replayBar: HTMLElement;
+  #replayScrub: HTMLInputElement | null = null;
+  #replayTime: HTMLElement | null = null;
+  #replaySpeedLabel: HTMLElement | null = null;
+  #replayChips: { x: number; el: HTMLElement }[] = [];
+
+  /**
+   * The replay chrome (16 §9.4): a sheet row in the panel's place —
+   * `▶ 0.1× ——●—— 1.2 s [0.1×|0.25×|1×] EXIT`. Tokens only, no new colours; the
+   * status line reads REPLAY for the screen reader; Escape and EXIT both leave.
+   */
+  showReplay(ctl: {
+    durationS: number;
+    onScrub(tS: number): void;
+    onSpeed(x: number): void;
+    onExit(): void;
+  }): void {
+    const scrub = el('input.replayscrub') as HTMLInputElement;
+    scrub.type = 'range';
+    scrub.min = '0';
+    scrub.max = ctl.durationS.toFixed(2);
+    scrub.step = '0.01';
+    scrub.value = '0';
+    scrub.setAttribute('aria-label', 'Replay position');
+    scrub.addEventListener('input', () => ctl.onScrub(Number(scrub.value)));
+    this.#replayScrub = scrub;
+    this.#replayTime = el('span.replaytime', { text: `${ctl.durationS.toFixed(1)} s` });
+    this.#replaySpeedLabel = el('span.replayspeed', { text: '0.1×' });
+    this.#replayChips = [0.1, 0.25, 1].map((x) => {
+      const b = button(`${x}×`, () => ctl.onSpeed(x), { class: 'chip' });
+      b.setAttribute('aria-pressed', x === 0.1 ? 'true' : 'false');
+      return { x, el: b };
+    });
+    this.#replayBar.replaceChildren(
+      el('span.replayglyph', { text: '▶', 'aria-hidden': 'true' }),
+      this.#replaySpeedLabel,
+      scrub,
+      this.#replayTime,
+      ...this.#replayChips.map((c) => c.el),
+      button('EXIT', () => ctl.onExit(), { class: 'chip action' }),
+      el('span.visually-hidden', { role: 'status', text: 'REPLAY' }),
+    );
+    this.labPanel.append(this.#replayBar); // mountPanel may have wiped it; append re-adopts
+    this.labPanel.classList.add('replaying');
+  }
+
+  updateReplay(tS: number, speed: number): void {
+    if (this.#replayScrub) this.#replayScrub.value = tS.toFixed(2);
+    this.#replayScrub?.setAttribute('aria-valuetext', `${tS.toFixed(1)} s`);
+    if (this.#replayTime) this.#replayTime.textContent = `${tS.toFixed(1)} s`;
+    if (this.#replaySpeedLabel) this.#replaySpeedLabel.textContent = `${speed}×`;
+    for (const c of this.#replayChips)
+      c.el.setAttribute('aria-pressed', c.x === speed ? 'true' : 'false');
+  }
+
+  hideReplay(): void {
+    this.labPanel.classList.remove('replaying');
+  }
 
   setLabControls(
     groupLabel: string,

@@ -53,6 +53,7 @@ export class CompliantPad {
   readonly restCentreY: number;
   minPadY: number;
   readonly #frame: BodyHandle;
+  readonly #crushedFloor: BodyHandle;
   readonly #at: Vec3;
   #joint: JointHandle | null = null;
   #regime: PadRegime;
@@ -78,6 +79,26 @@ export class CompliantPad {
       at: { x: at.x, y: restCentreY - 0.5, z: at.z },
       parts: [
         { shape: { kind: 'box', halfExtents: { x: 0.05, y: 0.05, z: 0.05 } }, material: 'steel' },
+      ],
+    });
+    /*
+     * The BORN-FIXED twin at the bottom of the stroke — the crushed regime's actual
+     * landing surface. Measured 2026-08-25: a converted-fixed body that has been
+     * setTransform'd away from its creation pose still RESOLVES contacts but stops
+     * EMITTING contact-force events (the whole impact channel goes silent), while a
+     * body born at its pose reports honestly. So the crushed mat body still drops
+     * (it carries the visual), but this twin — created here, never moved — catches
+     * the cube and reports the impact. While live, the legal stroke floor (150 J →
+     * 0.194 m of 0.25 m) keeps everything 3.6 cm clear of it.
+     */
+    this.#crushedFloor = pw.addCompound({
+      kind: 'fixed',
+      at: { x: at.x, y: restCentreY - params.travelM, z: at.z },
+      parts: [
+        {
+          shape: { kind: 'box', halfExtents: { x: halfM, y: 0.01, z: halfM } },
+          material: params.surface,
+        },
       ],
     });
     this.pad = pw.addCompound({
@@ -144,7 +165,19 @@ export class CompliantPad {
         this.pw.removeJoint(this.#joint);
         this.#joint = null;
       }
-      this.pw.setTransform(this.pad, this.#at, true);
+      /*
+       * A crushed mat lies at the BOTTOM of its stroke, immediately (16 §7.3
+       * amendment, 2026-08-25). It used to stand rigid at full height —
+       * indistinguishable from a solid board (user-caught, twice) — and a later
+       * "slam" teleport close to contact got the landing's CCD impact EATEN
+       * (0.87 m/s recorded for a 9.5 m/s strike). Flattening at decision time is
+       * seconds ahead of any contact, so the event pipeline stays honest.
+       */
+      this.pw.setTransform(
+        this.pad,
+        { x: this.#at.x, y: this.restCentreY - this.params.travelM, z: this.#at.z },
+        true,
+      );
       this.pw.setBodyKind(this.pad, 'fixed');
     } else {
       this.pw.setBodyKind(this.pad, 'dynamic');
@@ -211,9 +244,30 @@ export class CompliantPad {
       return;
     }
 
-    // Trampoline: explicit spring, light constant implicit damping — the mat is alive.
-    this.pw.applyForce(this.pad, { x: 0, y: p.kNpm * x, z: 0 });
-    this.pw.setLinearDamping(this.pad, p.dampingImplicit ?? 0);
+    /*
+     * Quiet hold at true rest: an underdamped per-step spring never lets the body
+     * sleep, so solver noise rings the bare mat forever (user-caught: "constantly
+     * vibrating", 2026-08-25). Judged by POSITION window (the W2 lesson), broken by
+     * any contact impulse the same step it lands.
+     */
+    /*
+     * Near rest and slow, the mat is OVERDAMPED instead of underdamped: at ζ≈0.08 a
+     * per-step spring rings on solver noise forever ("constantly vibrating",
+     * user-caught 2026-08-25). A velocity-zero hold was tried first and trapped a
+     * LOADED pad — a light cube's resting contact force chatters to zero and even
+     * sleeps (the W2 lesson, relearned), so no force read gates this. Damping never
+     * moves an equilibrium: mis-classification cannot corrupt the sag, only the
+     * settling style. A real strike arrives fast (|vy| ≥ 0.03) and keeps the mat lively.
+     */
+    /*
+     * The window must CONTAIN the explicit-spring limit cycle: at ω·dt = 1.22 the
+     * per-step spring pumps solver noise into a sustained ±1.3 mm ring whose peak
+     * velocity is ~0.1 m/s — fast-and-small. A real strike arrives at metres per
+     * second; 0.30 m/s cleanly separates the two (measured live, 2026-08-25).
+     */
+    const nearRest = Math.abs(this.restCentreY - y) < 0.004 && Math.abs(vy) < 0.3;
+    this.pw.setLinearDamping(this.pad, nearRest ? 60 : (p.dampingImplicit ?? 0));
+    if (x > 0) this.pw.applyForce(this.pad, { x: 0, y: p.kNpm * x, z: 0 });
   }
 
   teardown(): void {
@@ -223,6 +277,7 @@ export class CompliantPad {
     }
     this.pw.remove(this.pad);
     this.pw.remove(this.#frame);
+    this.pw.remove(this.#crushedFloor);
   }
 }
 

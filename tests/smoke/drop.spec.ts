@@ -86,4 +86,56 @@ test.describe('the Drop Tower', () => {
       'true',
     );
   });
+
+  test('the replay chrome takes the panel over and leaves cleanly', async ({ page }) => {
+    await bootIntoDrop(page);
+    await page.evaluate(() => window.__dense!.app.spawn());
+    await page.waitForTimeout(800);
+    await page.getByRole('button', { name: 'HOIST' }).click();
+    const drop = page.getByRole('button', { name: 'DROP', exact: true });
+    await expect(drop).toBeEnabled({ timeout: 10_000 });
+    await drop.click();
+    await page.waitForFunction(
+      () => {
+        const lab = window.__dense!.lab() as { state?: { phase?: string } } | null;
+        return lab?.state?.phase === 'done';
+      },
+      null,
+      { timeout: 15_000 },
+    );
+    // The live ring is only 1.5 s deep. Waiting past it proves REPLAY plays the
+    // verdict-time snapshot, not the long-gone ring (dead-button bug, 2026-08-25).
+    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: 'REPLAY' }).click();
+    await expect(page.locator('.replaybar')).toBeVisible();
+    await expect(page.locator('.replaybar input[type="range"]')).toBeVisible();
+    await expect(page.locator('.labpanel-inner')).toBeHidden();
+    await page.getByRole('button', { name: 'EXIT' }).click();
+    await expect(page.locator('.replaybar')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'REPLAY' })).toBeVisible();
+  });
+
+  test('a share link boots the whole scene back', async ({ page }) => {
+    await bootIntoDrop(page);
+    await page.evaluate(() => window.__dense!.app.spawn());
+    await page.waitForTimeout(800);
+    const url = await page.evaluate(() => {
+      const lab = window.__dense!.lab() as { applyShare(d: object): void };
+      lab.applyShare({ hM: 10, floor: 'sand', air: true });
+      window.__dense!.app.share(); // headless clipboard may refuse; the hash still lands
+      return location.href;
+    });
+    expect(url).toContain('#s=');
+    await page.goto('about:blank');
+    await page.goto(url);
+    await page.waitForFunction(() => window.__dense?.app.labs.activeId === 'drop', null, {
+      timeout: 20_000,
+    });
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => window.__dense!.app.entities.size)).toBe(1);
+    expect(
+      await page.evaluate(() => (window.__dense!.lab() as { shareBlock(): object }).shareBlock()),
+    ).toMatchObject({ hM: 10, floor: 'sand', air: true });
+    await expect(page.getByRole('radio', { name: 'Sand' })).toHaveAttribute('aria-checked', 'true');
+  });
 });

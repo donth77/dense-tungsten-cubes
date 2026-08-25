@@ -715,6 +715,12 @@ export const config = {
     hapticImpactScaleMs: 40,
     /** Below this delivered energy an impact earns no buzz at all. */
     hapticImpactMinJ: 2,
+    /** Camera shake (16 §10.1): the wow moment (1.9 kJ) is full scale. */
+    shake: { refJ: 1900, minJ: 2, ampFrac: 0.004, tauS: 0.18, freqHz: 19, phaseRad: 2.1 },
+    /** Impact puffs (16 §10.2). */
+    particles: { minJ: 1, sparkMinJ: 50 },
+    /** Floor marks (16 §7.5): FIFO cap per plate, halved on the low tier. */
+    decals: { cap: 24, fadeLast: 4 },
   },
 
   aero: {
@@ -740,8 +746,16 @@ export const config = {
          * drop-lab.test.ts). A real mini-tramp stands about this tall.
          */
         restCentreYM: 0.3,
-        /** A 2 kg cube from 2 m (39 J) uses 60 % of travel. */
-        kNpm: 3470,
+        /**
+         * Retuned 2026-08-25 (was 3470): a 2″ W from 2 m now returns ~63 % — a
+         * trampoline that reads as one (user verdict on the old tuning: "if it's not
+         * going to behave properly, it should not exist"). Stiffer is also MORE
+         * honest: the max under-gate catch (150 J) compresses 0.19 m of the 0.25 m
+         * stroke, so the soft travel-stop (86 % energy-adding artefact, doc 14) never
+         * fires inside the legal envelope. ω·dt = 1.22 < 2 keeps the explicit spring
+         * stable; the sweep lives in doc 16 §7.3's amendment.
+         */
+        kNpm: 8000,
         /** ζ ≈ 0.08 on the bare pad — the mat stays alive. */
         dampingImplicit: 7.7,
         surface: 'trampoline',
@@ -801,6 +815,8 @@ export const config = {
       craterJ: 10,
       /** Rebound fraction of the drop height that counts as BOUNCED / CAUGHT. */
       bounceFrac: 0.1,
+      /** Past this return fraction the mat THREW the cube — BOUNCED, not CAUGHT (2026-08-25 retune). */
+      thrownFrac: 0.35,
     },
     /** Where spawned cubes stage, in front of the plate (16 §5.4). */
     staging: { zM: 0.55, rowHalfM: 0.42, gapM: 0.02 },

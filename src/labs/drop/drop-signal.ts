@@ -169,6 +169,9 @@ export class DropSignal {
       case 'trampoline':
       case 'foam':
         if (padBottomed) return 'bottomed-out';
+        // The 8 kN/m retune made the mat a real thrower: past thrownFrac the honest
+        // word is BOUNCED; "caught" is reserved for the modest, held-onto return.
+        if (reboundM >= V.thrownFrac * this.#releaseHM) return 'bounced';
         return bounced ? 'caught' : 'absorbed';
       case 'concrete':
         if (e >= V.crackJ) return 'cracked';

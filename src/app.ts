@@ -3,12 +3,18 @@ import { config } from './config.ts';
 import { EntityStore } from './core/entities.ts';
 import { EventBus } from './core/events.ts';
 import { ReplayPlayer, ReplayRecorder } from './core/replay.ts';
+import type { ReplayClip } from './core/replay.ts';
 import { hapticImpact } from './fx/haptics.ts';
 import { Loop } from './core/loop.ts';
 import type { Stepper } from './core/loop.ts';
 import type { PhysicsWorld } from './core/physics.ts';
 import { RenderWorld } from './core/render.ts';
 import { AudioBus } from './fx/audio.ts';
+import { ImpactFx } from './fx/impactfx.ts';
+import { decodeScene, encodeScene, SHARE_MAX_CUBES } from './core/share.ts';
+import type { SceneState } from './core/share.ts';
+import { ImpactPuffs } from './fx/particles.ts';
+import { DecalSystem } from './fx/decals.ts';
 import { CameraRig } from './interaction/camera.ts';
 import { TheHand } from './interaction/hand.ts';
 import { InputRouter } from './interaction/input.ts';
@@ -36,6 +42,9 @@ export class App implements Stepper {
   readonly rig: CameraRig;
   readonly hand: TheHand;
   readonly audio: AudioBus;
+  readonly puffs: ImpactPuffs;
+  readonly decals: DecalSystem;
+  readonly impactFx: ImpactFx;
   readonly input: InputRouter;
   readonly loop: Loop;
   readonly settings = new SettingsStore();
@@ -137,6 +146,15 @@ export class App implements Stepper {
       }),
     );
 
+    this.puffs = new ImpactPuffs(this.render.scene);
+    this.decals = new DecalSystem(this.render.scene);
+    this.impactFx = new ImpactFx(
+      this.puffs,
+      this.decals,
+      () => this.render.resolutionScale < 1,
+      () => this.rig.reducedMotion,
+    );
+
     this.labs = new LabManager({
       physics: this.physics,
       entities: this.entities,
@@ -148,18 +166,26 @@ export class App implements Stepper {
       fx: {
         play: (voice, gain, rate) => this.audio.play(voice, gain, rate),
         haptic: (s) => hapticImpact(s),
+        decals: {
+          setTarget: (mesh, floor) => this.decals.setTarget(mesh as never, floor),
+          clear: () => this.decals.clear(),
+        },
       },
       replay: {
         track: (id, read) => this.replay.track(id, read),
         untrack: (id) => this.replay.untrack(id),
         markNow: () => this.replay.markNow(),
         play: (mark, preS, postS, followId) => this.startReplay(mark, preS, postS, followId),
+        snapshot: (mark, preS, postS) => this.replay.clip(mark, preS, postS),
+        playClip: (clip, followId) => this.startReplayClip(clip, followId),
         isPlaying: () => this.player.isPlaying,
       },
       ui: {
         setControls: (label, controls) => this.hud.setLabControls(label, controls),
         mountPanel: (model) => this.hud.mountPanel(model),
         toast: (m) => this.hud.toast(m),
+        share: () => this.share(),
+        resetLab: () => this.reset(),
       },
     });
 
@@ -214,7 +240,8 @@ export class App implements Stepper {
         this.hud.help.toggle();
         break;
       case 'dismiss':
-        if (this.hud.help.isOpen) this.hud.help.close();
+        if (this.player.isPlaying) this.stopReplay();
+        else if (this.hud.help.isOpen) this.hud.help.close();
         else this.#select(null);
         break;
       // Keyboard camera control. The canvas was completely keyboard-dead before this:
@@ -397,10 +424,70 @@ export class App implements Stepper {
     if (this.labs.active?.spawnOnEntry) this.spawn();
   }
 
+  /**
+   * Assemble and copy a share link for the scene as it stands (16 §12): the lab, every
+   * cube (capped at the codec's 30), the camera, and the active lab's own block.
+   */
+  share(): void {
+    const lab = this.labs.activeId;
+    if (!lab) return;
+    const cubes = [...this.entities.all].map((e) => ({
+      spec: { ...e.spec },
+      p: { x: e.mesh.position.x, y: e.mesh.position.y, z: e.mesh.position.z },
+      q: {
+        x: e.mesh.quaternion.x,
+        y: e.mesh.quaternion.y,
+        z: e.mesh.quaternion.z,
+        w: e.mesh.quaternion.w,
+      },
+    }));
+    const drop = this.labs.active?.shareBlock?.();
+    const { hash, droppedCubes } = encodeScene({
+      lab,
+      cubes,
+      cam: this.rig.view,
+      ...(drop ? { drop } : {}),
+    });
+    // The address bar carries the link too — the fallback copy surface everywhere.
+    history.replaceState(null, '', hash);
+    const url = `${location.origin}${location.pathname}${hash}`;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(
+        () =>
+          this.hud.toast(
+            droppedCubes > 0
+              ? `Link copied — first ${SHARE_MAX_CUBES} cubes (${droppedCubes} over the cap)`
+              : 'Link copied',
+          ),
+        () => this.hud.toast('Copy blocked — the link is in the address bar'),
+      );
+    } else {
+      this.hud.toast('Link is in the address bar');
+    }
+  }
+
+  /**
+   * Boot from a decoded share link: its lab, its cubes at their positions (orientation
+   * settles — the codec keeps q for an exact-restore later), its camera, its lab block.
+   */
+  async #bootShared(state: SceneState): Promise<void> {
+    await this.labs.switchTo(state.lab);
+    if (this.labs.activeId !== state.lab) return; // a quicker manual switch won
+    for (const c of state.cubes) this.entities.spawn({ ...c.spec }, c.p);
+    this.rig.setView(state.cam);
+    if (state.drop) this.labs.active?.applyShare?.(state.drop);
+    this.hud.toast('Scene restored from link');
+  }
+
   /** Freeze the world and play a clip (16 §9). No-op if the mark is gone. */
   startReplay(mark: { step: number }, preS: number, postS: number, followId?: EntityId): void {
     const clip = this.replay.clip(mark, preS, postS);
     if (!clip) return;
+    this.startReplayClip(clip, followId);
+  }
+
+  /** Play an already-cut clip — a lab's verdict-time snapshot (16 §9). */
+  startReplayClip(clip: ReplayClip, followId?: EntityId): void {
     this.hand.release('cancel');
     this.player.start(clip, (id) => {
       const e = this.entities.get(id);
@@ -421,12 +508,19 @@ export class App implements Stepper {
       // The one sanctioned auto-motion: player-initiated, λ-damped, replay-only (16 §9.3).
       this.rig.follow(() => this.player.positionOf(followId));
     }
+    this.hud.showReplay({
+      durationS: this.player.durationS,
+      onScrub: (tS) => this.player.scrub(tS),
+      onSpeed: (x) => this.player.setSpeed(x),
+      onExit: () => this.stopReplay(),
+    });
   }
 
   stopReplay(): void {
     if (!this.player.isPlaying) return;
     this.player.stop();
     this.rig.follow(null);
+    this.hud.hideReplay();
   }
 
   // ---- the fixedStep contract (08 §7). This ordering is load-bearing. -------------
@@ -457,6 +551,7 @@ export class App implements Stepper {
     // 7. Fan out.
     for (const ev of this.#impacts) {
       this.lastImpact = ev;
+      this.impactFx.onImpact(ev);
       this.bus.emit('impact', ev);
     }
     // 8. Sweep up anything flung off the slab. AFTER the fan-out, deliberately: an
@@ -468,12 +563,31 @@ export class App implements Stepper {
     this.entities.updateSelectionFade(dt);
   }
 
+  /**
+   * Per-frame FX: puff ballistics and the shake offset. Applied AFTER the rig has set
+   * the camera (additive, residue-free — 16 §10.1) and BEFORE the draw. Shake is off
+   * under reduced motion; the puffs run at half count instead (they are not camera
+   * motion).
+   */
+  #fxFrame(dtFrameS: number): void {
+    this.puffs.update(dtFrameS);
+    const shake = this.impactFx.shake;
+    shake.update(dtFrameS);
+    if (shake.active && !this.rig.reducedMotion) {
+      const o = shake.offset(this.rig.distanceM);
+      this.rig.camera.position.x += o.x;
+      this.rig.camera.position.y += o.y;
+    }
+  }
+
   renderStep(alpha: number, dtFrameS: number): void {
     if (this.player.isPlaying) {
       // Playback drives the meshes; the live prev/curr stay untouched underneath and
       // the first normal frame after stop() restores them (16 §9.2).
       const alive = this.player.update(dtFrameS);
+      this.hud.updateReplay(this.player.clockS, this.player.speed);
       this.rig.update(dtFrameS);
+      this.#fxFrame(dtFrameS);
       this.render.render();
       if (!alive) this.stopReplay();
       return;
@@ -484,6 +598,7 @@ export class App implements Stepper {
     // and the two are on screen together (15 §8.3).
     this.labs.render(alpha);
     this.rig.update(dtFrameS);
+    this.#fxFrame(dtFrameS);
     this.render.render();
 
     // The meter reads a live clamped force, so it updates every frame rather than on an
@@ -568,6 +683,8 @@ export class App implements Stepper {
     for (const off of this.#teardown.splice(0)) off();
     this.input.dispose();
     this.audio.dispose();
+    this.puffs.dispose();
+    this.decals.dispose();
     this.labs.teardown();
     this.entities.clear();
     this.physics.free();
@@ -578,8 +695,14 @@ export class App implements Stepper {
     // The boot cube spawns immediately — before the sandbox module even resolves — so
     // the first thud never waits on a lazy import (08 §11). That is the Sandbox's
     // spawnOnEntry behaviour, hard-coded here because boot always lands in Sandbox.
-    void this.labs.switchTo('sandbox');
-    this.spawn();
+    const shared = decodeScene(location.hash);
+    if (shared) {
+      // A share link takes over the boot (16 §12): its lab, its cubes, its camera.
+      void this.#bootShared(shared);
+    } else {
+      void this.labs.switchTo('sandbox');
+      this.spawn();
+    }
     this.loop.start();
   }
 

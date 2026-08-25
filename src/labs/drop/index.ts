@@ -1,4 +1,5 @@
 import { config } from '../../config.ts';
+import type { ReplayClip } from '../../core/replay.ts';
 import { dragForceInto } from '../../core/aero.ts';
 import { length, mass } from '../../data/format.ts';
 import { DropSignal } from './drop-signal.ts';
@@ -26,7 +27,7 @@ import type {
   PanelAction,
   PanelControl,
 } from '../lab.ts';
-import type { EntityId, ImpactEvent, Vec3 } from '../../types.ts';
+import type { EntityId, ImpactEvent, Vec3, SurfaceId } from '../../types.ts';
 
 /**
  * The Drop Tower (docs/16) — stage D2: the instrument, playable.
@@ -56,6 +57,10 @@ export class DropLab implements Lab {
   #droppedIds = new Set<EntityId>();
   #subjectId: EntityId | null = null;
   #mark: { step: number } | null = null;
+  /** Steps since the mark — the clip is cut the moment the post-window completes. */
+  #postMarkSteps = 0;
+  /** The clip cut at verdict time — the ring is only 1.5 s deep (16 §9). */
+  #clip: ReplayClip | null = null;
   #prevSpeedMps = 0;
   #ccdReleased = false;
   readonly #drag: Vec3 = { x: 0, y: 0, z: 0 };
@@ -102,6 +107,7 @@ export class DropLab implements Lab {
     }
     this.#signal = null;
     this.#mark = null;
+    this.#clip = null;
     this.#droppedIds.clear();
     this.#subjectId = null;
     this.#floors.pad?.resetBottoming();
@@ -122,11 +128,13 @@ export class DropLab implements Lab {
     const subject = cargo.reduce((a, b) => (b.massKg > a.massKg ? b : a));
     const hM = this.#tower.carriedHeightM;
     const pad = this.#floors.pad;
+    let crushTravelM = 0;
     if (pad) {
       // Gate on the vacuum arrival speed and the TOTAL cargo mass — the batch lands
       // together, and the mat answers to everything it catches at once.
       const vVac = Math.sqrt(2 * config.physics.gravityMps2 * hM);
-      pad.setRegime(pad.wouldBottomOut(totalKg, vVac) ? 'crushed' : 'live');
+      crushTravelM = pad.wouldBottomOut(totalKg, vVac) ? pad.params.travelM : 0;
+      pad.setRegime(crushTravelM > 0 ? 'crushed' : 'live');
     }
     const ids = this.#tower.drop();
     if (ids.length === 0) return;
@@ -136,7 +144,14 @@ export class DropLab implements Lab {
     this.#subjectId = subject.id;
     this.#ccdReleased = false;
     this.#prevSpeedMps = 0;
-    this.#signal = new DropSignal(subject.id, hM, this.#floors.active, this.#floors.topYM);
+    // A crushed drop lands on the BOTTOMED fabric, a full stroke lower — measure to
+    // the surface the cube actually meets (16 §7.3 amendment, 2026-08-25).
+    this.#signal = new DropSignal(
+      subject.id,
+      hM + crushTravelM,
+      this.#floors.active,
+      this.#floors.topYM - crushTravelM,
+    );
     this.#signalReleaseH = hM;
     this.#publish();
   }
@@ -154,6 +169,7 @@ export class DropLab implements Lab {
     // outlive the surface it measured (screenshot review 2026-08-24).
     this.#signal = null;
     this.#mark = null;
+    this.#clip = null;
     this.#droppedIds.clear();
     this.#subjectId = null;
     this.#publish();
@@ -165,8 +181,11 @@ export class DropLab implements Lab {
   }
 
   playReplay(): void {
-    if (!this.#mark || this.#subjectId === null) return;
-    this.#ctx.replay.play(this.#mark, 0.9, 0.6, this.#subjectId);
+    if (this.#subjectId === null) return;
+    // Prefer the verdict-time snapshot: the live ring has long rolled past the mark
+    // by the time a person reaches for REPLAY (dead-button bug, caught 2026-08-25).
+    if (this.#clip) this.#ctx.replay.playClip(this.#clip, this.#subjectId);
+    else if (this.#mark) this.#ctx.replay.play(this.#mark, 0.9, 0.6, this.#subjectId);
   }
 
   /** Every un-held dynamic cube standing inside the carriage's footprint (17 §3.1). */
@@ -207,6 +226,41 @@ export class DropLab implements Lab {
   beforePhysics(dt: number): void {
     this.#tower.beforePhysics(dt);
     this.#floors.beforePhysics();
+    /*
+     * The capacity gate guards EVERY landing, not only the winch's release. It used
+     * to be decided solely in dropNow(), so a hand-dropped cube met whatever regime
+     * the LAST winch drop had left - a mat crushed once played concrete for the rest
+     * of the session (user-caught, 2026-08-25). Judged from live arrival energy
+     * (current KE plus the fall still to come), the same pre-contact rule as D0.
+     * The mat also HEALS: once nothing occupies the footprint, it stands back up.
+     */
+
+    const pad = this.#floors.pad;
+    if (pad) {
+      const padTop = pad.padTopRestY;
+      let arrivalJ = 0;
+      let occupied = false;
+
+      for (const e of this.#ctx.entities.all) {
+        const p = e.curr.p;
+        if (Math.hypot(p.x, p.z) > pad.halfM + e.spec.sideM / 2) continue;
+        occupied = true;
+        if (e.kind !== 'dynamic' || e.heldBy !== null || e.lastVel.y >= 0) continue;
+        const dropM = p.y - e.spec.sideM / 2 - padTop;
+        if (dropM > 0.01) {
+          arrivalJ +=
+            0.5 * e.massKg * e.lastVel.y * e.lastVel.y +
+            e.massKg * config.physics.gravityMps2 * dropM;
+        }
+      }
+      if (arrivalJ > pad.params.bottomOutJ) {
+        pad.setRegime('crushed');
+      } else if (!occupied) {
+        pad.setRegime('live'); // no-op unless it was crushed
+      }
+      // The crush theatre fires as the cube arrives - the mat slams through its
+      // stroke a frame ahead of the landing, never in anticipation from afar.
+    }
     if (this.air) {
       // The air column applies to EVERY dynamic cube in the lab — a thrown cube slows
       // too; consistency beats a special case (16 §6.3). Never to instrument bodies.
@@ -229,6 +283,15 @@ export class DropLab implements Lab {
    * replay mark is stamped on the impact frame, which the recorder has just written.
    */
   onImpacts(events: readonly ImpactEvent[]): void {
+    /*
+     * Cut the replay snapshot as soon as mark+0.6 s is recorded — NOT at the verdict.
+     * The ring is 1.5 s deep and a trampoline bounce takes >2 s to settle, so a
+     * verdict-time cut came back empty on exactly the floor whose replay is most fun
+     * (user-visible as a dead REPLAY button, 2026-08-25).
+     */
+    if (this.#mark && !this.#clip && ++this.#postMarkSteps >= 36) {
+      this.#clip = this.#ctx.replay.snapshot(this.#mark, 0.9, 0.6);
+    }
     /*
      * The panel follows EVERYTHING it renders, not just the drop signal. Two bugs of
      * the same species, both user-caught on 2026-08-24: pressing HOIST armed the
@@ -259,6 +322,7 @@ export class DropLab implements Lab {
       events.some((ev) => typeof ev.a === 'number' && this.#droppedIds.has(ev.a))
     ) {
       this.#mark = this.#ctx.replay.markNow();
+      this.#postMarkSteps = 0;
     }
 
     const v = e.lastVel;
@@ -281,6 +345,9 @@ export class DropLab implements Lab {
     this.#prevSpeedMps = speedNow;
 
     if (state.phase === 'done' && !this.#ccdReleased) {
+      if (this.#mark && !this.#clip) {
+        this.#clip = this.#ctx.replay.snapshot(this.#mark, 0.9, 0.6);
+      }
       this.#ccdReleased = true;
       for (const droppedId of this.#droppedIds) {
         const de = this.#ctx.entities.get(droppedId);
@@ -297,10 +364,12 @@ export class DropLab implements Lab {
   }
 
   reset(): void {
+    this.#ctx.fx.decals.clear(); // marks are session history; RESET starts a new session (16 §7.5)
     // Keep floor, height, air — clearing cubes is the app's half (16 §11.8).
     this.#tower.unload();
     this.#signal = null;
     this.#mark = null;
+    this.#clip = null;
     this.#droppedIds.clear();
     this.#subjectId = null;
     this.#floors.pad?.setRegime('live');
@@ -497,7 +566,8 @@ export class DropLab implements Lab {
     if (this.#mark && phase === 'done') {
       actions.push({ id: 'replay', label: 'REPLAY', onSelect: () => this.playReplay() });
     }
-    actions.push({ id: 'reset', label: 'RESET', onSelect: () => this.reset() });
+    actions.push({ id: 'share', label: 'SHARE', onSelect: () => this.#ctx.ui.share() });
+    actions.push({ id: 'reset', label: 'RESET', onSelect: () => this.#ctx.ui.resetLab() });
 
     return {
       id: 'drop',
@@ -523,6 +593,22 @@ export class DropLab implements Lab {
       actions,
       ...(announce ? { announce } : {}),
     };
+  }
+
+  /** The drop block for the share codec (16 §12). */
+  shareBlock(): { hM: number; floor: SurfaceId; air: boolean } {
+    return { hM: this.#tower.targetHM, floor: this.#floors.active, air: this.air };
+  }
+
+  /** A decoded share block on load: floor, height, drag — then the panel re-publishes. */
+  applyShare(drop: { hM: number; floor: SurfaceId; air: boolean }): void {
+    if ((FLOOR_IDS as readonly string[]).includes(drop.floor)) {
+      this.setFloor(drop.floor as FloorId);
+    }
+    const clamped = Math.min(config.drop.tower.maxHM, Math.max(config.drop.tower.minHM, drop.hM));
+    this.#tower.targetHM = clamped;
+    this.air = drop.air;
+    this.#publish(); // setFloor published mid-way with the old height; say it all again
   }
 
   #releaseH(): number {

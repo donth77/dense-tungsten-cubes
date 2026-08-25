@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { config } from '../../src/config.ts';
@@ -83,12 +84,20 @@ class Rig {
         setControls: () => undefined,
         mountPanel: () => ({ update: () => undefined, dispose: () => undefined }),
         toast: () => undefined,
+        share: () => undefined,
+        resetLab: () => undefined,
       },
-      fx: { play: () => undefined, haptic: () => undefined },
+      fx: {
+        play: () => undefined,
+        haptic: () => undefined,
+        decals: { setTarget: () => undefined, clear: () => undefined },
+      },
       replay: {
         track: () => undefined,
         untrack: () => undefined,
         markNow: () => ({ step: -1 }),
+        snapshot: () => null,
+        playClip: () => undefined,
         play: () => undefined,
         isPlaying: () => false,
       },
@@ -213,11 +222,12 @@ describe('the Drop Tower, as shipped', () => {
     expect(vVac).toBeLessThan(19.9);
   }, 120_000);
 
-  it('gates the trampoline: 2" W is CAUGHT, 4" W lands on a crushed mat, BOTTOMED OUT', async () => {
+  it('gates the trampoline: 2" W is THROWN (bounced), 4" W lands on a crushed mat, BOTTOMED OUT', async () => {
     const caught = await rigWithStage();
     caught.lab.setFloor('trampoline');
     fullDrop(caught, 'W', 2, 5);
-    expect(caught.lab.state!.verdict).toBe('caught');
+    // Re-pinned for the 8 kN/m retune (2026-08-25): the mat now genuinely throws it.
+    expect(caught.lab.state!.verdict).toBe('bounced');
     expect(caught.lab.floorId).toBe('trampoline');
     caught.pw.free();
 
@@ -225,6 +235,17 @@ describe('the Drop Tower, as shipped', () => {
     crushed.lab.setFloor('trampoline');
     fullDrop(crushed, 'W', 4, 5);
     expect(crushed.lab.state!.verdict).toBe('bottomed-out');
+    // The slammed landing must still record an HONEST impact (the slam teleport ate
+    // the first contact when it fired too close — user-visible as a 0.4 mph
+    // "impact", 2026-08-25). ~9.9 m/s vacuum from 5 m, drag shaves a little.
+    const imp = crushed.lab.state!.impact!;
+    writeFileSync(
+      '/private/tmp/claude-501/-Users-tomdonohue-projects-tungsten-cube-sim/6337dfa8-ecea-4672-8ddd-5daab02198d9/scratchpad/crush-impact.json',
+      JSON.stringify(imp),
+    );
+    expect(imp.vMps).toBeGreaterThan(8);
+    expect(imp.tFlightS).toBeLessThan(1.3);
+    expect(imp.deliveredJ).toBeGreaterThan(200);
     crushed.pw.free();
   }, 120_000);
 
@@ -288,6 +309,20 @@ describe('the Drop Tower, as shipped', () => {
     expect(al.curr.p.y).toBeLessThan(0.2);
     rig.pw.free();
   }, 120_000);
+
+  it('applyShare restores floor, height, and drag — and shareBlock round-trips it', async () => {
+    const rig = await rigWithStage();
+    rig.lab.applyShare({ hM: 7.3, floor: 'oak', air: false });
+    expect(rig.lab.shareBlock()).toEqual({ hM: 7.3, floor: 'oak', air: false });
+    // The codec vouches for shape, not for range: height clamps to the tower's rails,
+    // and a SurfaceId that is not a floor of this lab leaves the floor alone.
+    rig.lab.applyShare({ hM: 99, floor: 'rubber', air: true });
+    const block = rig.lab.shareBlock();
+    expect(block.hM).toBe(config.drop.tower.maxHM);
+    expect(block.floor).toBe('oak');
+    expect(block.air).toBe(true);
+    rig.lab.teardown();
+  });
 
   it('spawns fill the carriage footprint, then yield to staging while carrying', async () => {
     const rig = await rigWithStage();

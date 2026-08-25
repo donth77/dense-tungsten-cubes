@@ -108,8 +108,12 @@ describe('the drop signal (16 §12.2) — three beats, nothing revised', () => {
     expect(runDrop('oak', ev({ b: 'oak', energyJ: 15 })).verdict).toBe('dented');
     expect(runDrop('sand', ev({ b: 'sand', energyJ: 15 })).verdict).toBe('cratered');
     expect(runDrop('steel', ev({ b: 'steel', energyJ: 6 })).verdict).toBe('rang');
+    // Re-pinned for the 8 kN/m retune (2026-08-25): a big return is a THROW.
     expect(
       runDrop('trampoline', ev({ b: 'trampoline', energyJ: 60 }), { rebound: 0.9 }).verdict,
+    ).toBe('bounced');
+    expect(
+      runDrop('trampoline', ev({ b: 'trampoline', energyJ: 60 }), { rebound: 0.4 }).verdict,
     ).toBe('caught');
     expect(runDrop('foam', ev({ b: 'foam', energyJ: 30 })).verdict).toBe('absorbed');
     expect(

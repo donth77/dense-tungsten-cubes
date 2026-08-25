@@ -354,7 +354,8 @@ describe('D1 — the pad flips regimes in place', () => {
     );
     runPad(pw, rig, 2);
     const sag = pad.restCentreY - pad.padY();
-    expect(sag, 'the live spring sags under a placed cube').toBeGreaterThan(0.0005);
+    // Re-pinned for the 8 kN/m retune (2026-08-25): a 1″ W (2.9 N) sags 0.36 mm.
+    expect(sag, 'the live spring sags under a placed cube').toBeGreaterThan(0.0002);
     pw.remove(h1);
     runPad(pw, rig, 2);
 
@@ -362,7 +363,8 @@ describe('D1 — the pad flips regimes in place', () => {
     pad.setRegime('crushed');
     expect(pw.bodyKindOf(pad.pad)).toBe('fixed');
     expect(pw.jointCount, 'the joint is removed while crushed').toBe(joints0);
-    expect(pad.padY()).toBeCloseTo(pad.restCentreY, 6);
+    // Crushed = flattened at the bottom of the stroke (2026-08-25).
+    expect(pad.padY()).toBeCloseTo(pad.restCentreY - pad.params.travelM, 6);
     const s2 = 1 * IN;
     const h2 = pw.addCube(
       { metal: 'W', sideM: s2, purityPctW: 95 },
@@ -374,7 +376,10 @@ describe('D1 — the pad flips regimes in place', () => {
     runPad(pw, rig, 2, () => {
       apex = Math.max(apex, pw.transformOf(h2).p.y);
     });
-    expect(pad.padY(), 'a crushed mat does not move').toBeCloseTo(pad.restCentreY, 6);
+    expect(pad.padY(), 'a crushed mat does not move').toBeCloseTo(
+      pad.restCentreY - pad.params.travelM,
+      6,
+    );
     expect(
       Math.max(0, (apex - s2 / 2 - pad.padTopRestY) / 3),
       'the rebound is the fabric alone',
@@ -391,7 +396,7 @@ describe('D1 — the pad flips regimes in place', () => {
       { entityId: 3 },
     );
     runPad(pw, rig, 2);
-    expect(pad.restCentreY - pad.padY(), 'the revived spring sags again').toBeGreaterThan(0.0005);
+    expect(pad.restCentreY - pad.padY(), 'the revived spring sags again').toBeGreaterThan(0.0002);
     pw.remove(h3);
 
     pad.teardown();

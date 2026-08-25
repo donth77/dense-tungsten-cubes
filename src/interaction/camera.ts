@@ -249,6 +249,32 @@ export class CameraRig {
     this.#reducedMotion = reduced;
   }
 
+  /** Current camera-to-target distance, for screen-proportional FX (16 §10.1). */
+  get distanceM(): number {
+    return this.#state.distM;
+  }
+
+  /** The share codec's camera block (16 §12): degrees out… */
+  get view(): { azDeg: number; elDeg: number; distM: number; target: Vec3 } {
+    const st = this.#state;
+    return {
+      azDeg: st.azimuthRad / DEG,
+      elDeg: st.elevationRad / DEG,
+      distM: st.distM,
+      target: { x: st.target.x, y: st.target.y, z: st.target.z },
+    };
+  }
+
+  /** …and a SNAP in — applied on load, before the first frame, so nothing flies. */
+  setView(v: { azDeg: number; elDeg: number; distM: number; target: Vec3 }): void {
+    for (const st of [this.#goal, this.#state]) {
+      st.azimuthRad = v.azDeg * DEG;
+      st.elevationRad = v.elDeg * DEG;
+      st.distM = v.distM;
+      st.target.set(v.target.x, v.target.y, v.target.z);
+    }
+  }
+
   get reducedMotion(): boolean {
     return this.#reducedMotion;
   }

@@ -6,7 +6,8 @@ import type { RenderWorld } from '../core/render.ts';
 import type { EntityId, ImpactEvent, LabId, Quat, Vec3 } from '../types.ts';
 
 export type { LabId } from '../types.ts';
-import type { ReplayMark } from '../core/replay.ts';
+import type { ReplayClip, ReplayMark } from '../core/replay.ts';
+import type { SurfaceId } from '../types.ts';
 import type { VoiceId } from '../fx/audio.ts';
 
 /**
@@ -50,6 +51,15 @@ export interface LabContext {
   fx: {
     play(voice: VoiceId, gain?: number, rate?: number): void;
     haptic(intensity01: number): void;
+    /**
+     * Floor-mark registration (16 §10.3): the Drop plate offers its top face as the
+     * decal target on mount; `setTarget(null, null)` (or any re-target) clears the
+     * marks. Labs that never register get no marks — the default is silence.
+     */
+    decals: {
+      setTarget(mesh: unknown, floor: 'concrete' | 'oak' | 'sand' | null): void;
+      clear(): void;
+    };
   };
   /**
    * The transform ring buffer (16 §9). `track`/`untrack` are for lab PROPS (pads, the
@@ -62,6 +72,14 @@ export interface LabContext {
     untrack(id: number): void;
     markNow(): ReplayMark;
     play(mark: ReplayMark, preS: number, postS: number, followId?: EntityId): void;
+    /**
+     * Cut the clip around `mark` NOW, while the ring still holds it. The ring is
+     * only 1.5 s deep and keeps recording at rest, so a lab that offers REPLAY
+     * beyond that window must snapshot at verdict time and play the snapshot
+     * (dead-button bug, caught live 2026-08-25).
+     */
+    snapshot(mark: ReplayMark, preS: number, postS: number): ReplayClip | null;
+    playClip(clip: ReplayClip, followId?: EntityId): void;
     isPlaying(): boolean;
   };
 }
@@ -165,6 +183,15 @@ export interface LabUi {
   setControls(groupLabel: string, controls: readonly LabControl[]): void;
   mountPanel(model: LabPanelModel): LabPanelHandle;
   toast(message: string): void;
+  /** Copy a share link for the whole current scene (16 §12); the app assembles it. */
+  share(): void;
+  /**
+   * The FULL reset — clears the player's cubes, resets the lab, reframes the camera
+   * (what the R key does). A panel button labelled RESET must mean this: a lab-only
+   * reset leaves cubes behind to silently contaminate the next batch capture
+   * (user-felt on the trampoline, 2026-08-25).
+   */
+  resetLab(): void;
 }
 
 /**
@@ -208,6 +235,10 @@ export interface Lab {
    * tick between impacts too.
    */
   onImpacts?(events: readonly ImpactEvent[]): void;
+  /** This lab's block for the share codec (16 §12), if it keeps one. */
+  shareBlock?(): { hM: number; floor: SurfaceId; air: boolean };
+  /** Apply a decoded share block on load. The codec has already vouched for shape. */
+  applyShare?(drop: { hM: number; floor: SurfaceId; air: boolean }): void;
   /**
    * Where this lab would rather a new cube appeared, in world space.
    *

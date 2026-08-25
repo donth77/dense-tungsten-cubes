@@ -938,3 +938,44 @@
 .primary:disabled:active {
   background: var(--acc);
 }
+
+/* ---- Replay chrome (16 §9.4): a sheet row in the panel's place ---- */
+.replaybar {
+  display: none;
+}
+.labpanel.replaying .labpanel-inner {
+  display: none;
+}
+.labpanel.replaying .replaybar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.replaybar .replayglyph {
+  opacity: 0.7;
+}
+.replaybar .replayspeed,
+.replaybar .replaytime {
+  font-variant-numeric: tabular-nums;
+  min-width: 4ch;
+}
+.replaybar input[type='range'] {
+  flex: 1;
+  min-width: 60px;
+}
+.replaybar .chip[aria-pressed='true'] {
+  outline: 1px solid currentcolor;
+}
+/* Screen-reader-only text (first user: the replay chrome's REPLAY status). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

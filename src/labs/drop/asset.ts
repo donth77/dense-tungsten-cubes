@@ -52,7 +52,14 @@ export function loadTrampolineAsset(): Promise<TrampolineAsset> {
     frame: p['frame']!,
     mat: p['mat']!,
   }));
-  return trampoline;
+  /*
+   * Hand out CLONES. The cache used to return the actual scene nodes: the first
+   * trampoline mount adopted them, the teardown orphaned them, and every LATER
+   * mount re-adopted whatever was left - by the third visit the mat floated alone
+   * with no frame under it (user-caught, 2026-08-25). Geometry and materials stay
+   * shared; floors only disposes what it created itself.
+   */
+  return trampoline.then((a) => ({ frame: a.frame.clone(), mat: a.mat.clone() }));
 }
 
 /** Tests only — the app keeps the caches for the session. */
