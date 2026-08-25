@@ -8,10 +8,26 @@
 
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
-export type SurfaceId = 'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice';
+export type SurfaceId =
+  'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice' | 'sand' | 'trampoline';
+
+/**
+ * What a rigid body IS to the solver. Most bodies are born and die in one kind; the
+ * Drop Tower's winch flips a cube dynamic <-> kinematic (16 §6.2), and a compliant
+ * pad's crushed regime flips it to FIXED — fixed, not kinematic, because a kinematic
+ * body is not a reliable CCD obstacle in Rapier 0.19.3 (16 §6.4 amendment).
+ */
+export type BodyKind = 'dynamic' | 'kinematic' | 'fixed';
 
 /** Monotonically increasing, never reused within a session. */
 export type EntityId = number;
+
+/**
+ * The labs. Lives here rather than in `labs/lab.ts` (which re-exports it) because the
+ * event contract below and the share codec (`core/share.ts`) both need it, and core/
+ * may not import labs/ (08 §5).
+ */
+export type LabId = 'sandbox' | 'weigh' | 'drop';
 
 export interface Vec3 {
   x: number;
@@ -178,7 +194,7 @@ export interface EventMap {
   /** Info-card target. */
   select: { id: EntityId | null };
   'settings-changed': { units: 'si' | 'imperial'; sound: boolean };
-  'lab-changed': { lab: 'sandbox' | 'weigh' };
+  'lab-changed': { lab: LabId };
 }
 
 export type EventName = keyof EventMap;

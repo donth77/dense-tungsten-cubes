@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { config } from './config.ts';
 import { EntityStore } from './core/entities.ts';
 import { EventBus } from './core/events.ts';
+import { ReplayPlayer, ReplayRecorder } from './core/replay.ts';
+import { hapticImpact } from './fx/haptics.ts';
 import { Loop } from './core/loop.ts';
 import type { Stepper } from './core/loop.ts';
 import type { PhysicsWorld } from './core/physics.ts';
@@ -14,7 +16,7 @@ import { densityOf } from './data/metals.ts';
 import { LabManager } from './labs/lab.ts';
 import { Hud } from './ui/hud.ts';
 import { SettingsStore } from './ui/settings.ts';
-import type { CubeSpec, EntityId, ImpactEvent, MetalId, Vec3 } from './types.ts';
+import type { LabId, CubeSpec, EntityId, ImpactEvent, MetalId, Vec3 } from './types.ts';
 import type { ActionId } from './interaction/bindings.ts';
 
 /** One key press is worth this much pointer travel — key repeat does the rest. */
@@ -46,6 +48,12 @@ export class App implements Stepper {
   /** Reused each step — the impact list must not allocate at 60 Hz. */
   readonly #impacts: ImpactEvent[] = [];
   lastImpact: ImpactEvent | null = null;
+
+  /** The transform ring buffer and its playback (16 §9). Recording never stops... */
+  readonly replay = new ReplayRecorder();
+  readonly player = new ReplayPlayer();
+  /** ...except while a clip plays: fixedStep is skipped, so the ring holds still. */
+  #stepCount = 0;
 
   /** The current spawner selection. M0 has no UI, so it's a constant (08 §11 step 3). */
   spec: CubeSpec = { metal: 'W', sideM: 2 * 0.0254, purityPctW: 95 };
@@ -80,10 +88,13 @@ export class App implements Stepper {
     // reference to core/ (08 §5.3: fan-out is events, not calls).
     this.bus.on('spawn', ({ id }) => {
       const e = this.entities.get(id);
-      if (e) this.audio.registerEntity(id, e.spec.metal, e.spec.sideM);
+      if (!e) return;
+      this.audio.registerEntity(id, e.spec.metal, e.spec.sideM);
+      this.replay.track(id, (p, q) => this.physics.readTransformInto(e.body, p, q));
     });
     this.bus.on('despawn', ({ id }) => {
       this.audio.unregisterEntity(id);
+      this.replay.untrack(id);
       if (this.#selected === id) this.#select(null);
     });
 
@@ -134,8 +145,20 @@ export class App implements Stepper {
       bus: this.bus,
       camera: { frameRadius: (r, opts) => this.rig.frameRadius(r, opts) },
       units: () => this.settings.units,
+      fx: {
+        play: (voice, gain, rate) => this.audio.play(voice, gain, rate),
+        haptic: (s) => hapticImpact(s),
+      },
+      replay: {
+        track: (id, read) => this.replay.track(id, read),
+        untrack: (id) => this.replay.untrack(id),
+        markNow: () => this.replay.markNow(),
+        play: (mark, preS, postS, followId) => this.startReplay(mark, preS, postS, followId),
+        isPlaying: () => this.player.isPlaying,
+      },
       ui: {
         setControls: (label, controls) => this.hud.setLabControls(label, controls),
+        mountPanel: (model) => this.hud.mountPanel(model),
         toast: (m) => this.hud.toast(m),
       },
     });
@@ -347,20 +370,23 @@ export class App implements Stepper {
    * a person expects of a tab switch, and each lab has the same spawner anyway
    * (user decision 2026-08-23).
    */
-  async #switchLab(lab: 'sandbox' | 'weigh'): Promise<void> {
+  async #switchLab(lab: LabId): Promise<void> {
     if (this.labs.activeId === lab) return;
+    this.stopReplay();
+    this.replay.clear();
     this.hand.release('cancel');
     this.#select(null);
     this.entities.clear();
     await this.labs.switchTo(lab);
-    // Give the new lab its first cube, the way boot does (08 §11 step 25: ten seconds to
-    // delight). Only if THIS switch is the one that landed — a quicker switch to a third
-    // lab may have won the race, and it spawns its own. Not on the 'lab-changed' event,
-    // which also fires for the boot mount and doubled up the boot cube.
-    if (this.labs.activeId === lab) this.spawn();
+    // Only if THIS switch is the one that landed — a quicker switch to a third lab may
+    // have won the race — and only if the lab WANTS a starter cube (Lab.spawnOnEntry):
+    // the Sandbox opens with its thud; the instrument labs open as a cleared bench
+    // (user decision 2026-08-24).
+    if (this.labs.activeId === lab && this.labs.active?.spawnOnEntry) this.spawn();
   }
 
   reset(): void {
+    this.stopReplay();
     this.hand.release();
     this.#select(null);
     this.entities.clear();
@@ -368,12 +394,47 @@ export class App implements Stepper {
     // beam left against its stop. The lab owns that state and has to be told (15 §8.1).
     this.labs.reset();
     this.rig.reset(this.spec.sideM);
-    this.spawn();
+    if (this.labs.active?.spawnOnEntry) this.spawn();
+  }
+
+  /** Freeze the world and play a clip (16 §9). No-op if the mark is gone. */
+  startReplay(mark: { step: number }, preS: number, postS: number, followId?: EntityId): void {
+    const clip = this.replay.clip(mark, preS, postS);
+    if (!clip) return;
+    this.hand.release('cancel');
+    this.player.start(clip, (id) => {
+      const e = this.entities.get(id);
+      if (!e) return null;
+      return {
+        setPose: (p, q) => {
+          e.mesh.position.set(p.x, p.y, p.z);
+          e.mesh.quaternion.set(q.x, q.y, q.z, q.w);
+          e.blob.visible = false;
+        },
+        setVisible: (on) => {
+          e.mesh.visible = on;
+          e.blob.visible = on;
+        },
+      };
+    });
+    if (followId !== undefined && !this.rig.reducedMotion) {
+      // The one sanctioned auto-motion: player-initiated, λ-damped, replay-only (16 §9.3).
+      this.rig.follow(() => this.player.positionOf(followId));
+    }
+  }
+
+  stopReplay(): void {
+    if (!this.player.isPlaying) return;
+    this.player.stop();
+    this.rig.follow(null);
   }
 
   // ---- the fixedStep contract (08 §7). This ordering is load-bearing. -------------
 
   fixedStep(dt: number): void {
+    // 0. A replay holds the world still. The loop keeps draining its accumulator
+    // through these cheap calls, so exiting a replay never causes a catch-up burst.
+    if (this.player.isPlaying) return;
     // 1. input is event-driven and already latched by the browser; nothing to snapshot.
     // 2. Hand forces go on PRE-step, so the solver resolves them in the same step.
     this.hand.applyForces();
@@ -389,6 +450,10 @@ export class App implements Stepper {
     //    BEFORE the impact fan-out, so a listener that asks an instrument what it reads
     //    gets this step's answer rather than the last one's.
     this.labs.afterPhysics(dt);
+    // 6b. Record the frame, then hand the step's impacts to the lab BEFORE the bus
+    // fan-out (16 §11.1) — a mark taken in onImpacts must name a recorded frame.
+    this.replay.record(this.#stepCount++);
+    this.labs.onImpacts(this.#impacts);
     // 7. Fan out.
     for (const ev of this.#impacts) {
       this.lastImpact = ev;
@@ -404,6 +469,15 @@ export class App implements Stepper {
   }
 
   renderStep(alpha: number, dtFrameS: number): void {
+    if (this.player.isPlaying) {
+      // Playback drives the meshes; the live prev/curr stay untouched underneath and
+      // the first normal frame after stop() restores them (16 §9.2).
+      const alive = this.player.update(dtFrameS);
+      this.rig.update(dtFrameS);
+      this.render.render();
+      if (!alive) this.stopReplay();
+      return;
+    }
     this.entities.interpolate(alpha);
     // Instruments interpolate on the same alpha as the cubes. A balance beam drawn
     // straight from the fixed-step pose judders beside the cubes sitting in its pans,
@@ -501,6 +575,9 @@ export class App implements Stepper {
 
   start(): void {
     this.rig.frameFor(this.spec.sideM);
+    // The boot cube spawns immediately — before the sandbox module even resolves — so
+    // the first thud never waits on a lazy import (08 §11). That is the Sandbox's
+    // spawnOnEntry behaviour, hard-coded here because boot always lands in Sandbox.
     void this.labs.switchTo('sandbox');
     this.spawn();
     this.loop.start();

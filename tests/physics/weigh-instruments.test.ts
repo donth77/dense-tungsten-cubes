@@ -53,7 +53,19 @@ class Rig {
       bus: { emit: () => undefined } as unknown as LabContext['bus'],
       camera: { frameRadius: () => undefined },
       units: () => 'si' as const,
-      ui: { setControls: () => undefined, toast: () => undefined },
+      ui: {
+        setControls: () => undefined,
+        mountPanel: () => ({ update: () => undefined, dispose: () => undefined }),
+        toast: () => undefined,
+      },
+      fx: { play: () => undefined, haptic: () => undefined },
+      replay: {
+        track: () => undefined,
+        untrack: () => undefined,
+        markNow: () => ({ step: -1 }),
+        play: () => undefined,
+        isPlaying: () => false,
+      },
     };
   }
 

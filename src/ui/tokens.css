@@ -56,6 +56,7 @@
   --t-base: 0.875rem;
   --t-val: 1.0625rem;
   --t-lg: 1.5rem;
+  --t-xl: 2rem; /* the lab panel's one big number (16 §11.5) */
 
   /* ---- space, size, shape ---- */
   --s1: 4px;

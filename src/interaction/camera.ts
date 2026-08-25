@@ -53,6 +53,8 @@ export class CameraRig {
 
   #viewOffsetPx = { x: 0, y: 0 };
   #reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** Replay-only tracking (16 §9.3): while set, the goal target follows this. */
+  #follow: (() => Vec3 | null) | null = null;
 
   constructor(readonly camera: THREE.PerspectiveCamera) {
     this.#apply();
@@ -212,6 +214,12 @@ export class CameraRig {
    * else's device.
    */
   update(dtS: number): void {
+    if (this.#follow) {
+      const p = this.#follow();
+      // Straight onto the GOAL, through the same damping as every other camera move,
+      // and past pan's clamps — a cube 20 m up is exactly what this exists to watch.
+      if (p) this.#goal.target.set(p.x, p.y, p.z);
+    }
     const lambda = this.#reducedMotion ? config.camera.lambdaReducedMotion : config.camera.lambda;
     const k = 1 - Math.exp(-lambda * Math.min(dtS, 0.1));
 
@@ -239,6 +247,20 @@ export class CameraRig {
 
   setReducedMotion(reduced: boolean): void {
     this.#reducedMotion = reduced;
+  }
+
+  get reducedMotion(): boolean {
+    return this.#reducedMotion;
+  }
+
+  /**
+   * Install or clear the follow source. The ONE sanctioned auto-motion (16 §9.3): it
+   * runs only inside a replay the player started, and the caller must not install it
+   * under reduced motion. Cleared, the goal target stays where the follow left it —
+   * the caller re-frames.
+   */
+  follow(get: (() => Vec3 | null) | null): void {
+    this.#follow = get;
   }
 
   get distance(): number {

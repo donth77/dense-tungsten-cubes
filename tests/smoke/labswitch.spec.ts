@@ -6,8 +6,10 @@ import type { Page } from '@playwright/test';
  *
  * 08 §9 had cubes persist across labs. In practice a cube on the balance's pan had the
  * balance torn down from under it and fell 40 cm, and a cube on a Sandbox mat did the
- * same — so the switch clears the field and spawns the new lab's first cube, the way
- * boot does. The held cube is released first, not thrown, and the selection is dropped.
+ * same — so the switch clears the field. Whether the NEW lab gets a starter cube is the
+ * lab's own call (`spawnOnEntry`, user decision 2026-08-24): the Sandbox spawns one —
+ * the first thud is its opening move — and the instrument labs greet you as a cleared
+ * bench. The held cube is released first, not thrown, and the selection is dropped.
  */
 
 async function boot(page: Page): Promise<void> {
@@ -17,7 +19,7 @@ async function boot(page: Page): Promise<void> {
 }
 
 test.describe('switching labs', () => {
-  test('clears the field and spawns one fresh cube in the new lab', async ({ page }) => {
+  test('clears the field; only the Sandbox seeds a starter cube', async ({ page }) => {
     await boot(page);
 
     const before = await page.evaluate(async () => {
@@ -47,13 +49,13 @@ test.describe('switching labs', () => {
         holding: app.hand.isHolding,
       };
     });
-    // The three Sandbox cubes are gone; exactly one new cube has been spawned for Weigh.
-    expect(after.count).toBe(1);
+    // The three Sandbox cubes are gone, and Weigh starts EMPTY — no starter cube.
+    expect(after.count).toBe(0);
     expect(after.cardShown).toBe(false);
     expect(after.markerVisible).toBe(false);
     expect(after.holding).toBe(false);
 
-    // And back again: the Weigh cube goes, Sandbox gets its own.
+    // And back again: Sandbox spawns its starter, the way boot does.
     await page.getByRole('tab', { name: 'Sandbox' }).click();
     await page.waitForFunction(() => window.__dense!.app.labs.activeId === 'sandbox', null, {
       timeout: 10_000,
@@ -80,6 +82,6 @@ test.describe('switching labs', () => {
       return { holding: app.hand.isHolding, count: app.entities.size };
     });
     expect(state.holding).toBe(false);
-    expect(state.count).toBe(1);
+    expect(state.count).toBe(0);
   });
 });

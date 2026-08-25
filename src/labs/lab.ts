@@ -3,7 +3,11 @@ import type { EntityStore } from '../core/entities.ts';
 import type { EventBus } from '../core/events.ts';
 import type { PhysicsWorld } from '../core/physics.ts';
 import type { RenderWorld } from '../core/render.ts';
-import type { Vec3 } from '../types.ts';
+import type { EntityId, ImpactEvent, LabId, Quat, Vec3 } from '../types.ts';
+
+export type { LabId } from '../types.ts';
+import type { ReplayMark } from '../core/replay.ts';
+import type { VoiceId } from '../fx/audio.ts';
 
 /**
  * The lab contract (05, 08 §9).
@@ -39,12 +43,113 @@ export interface LabContext {
    * rather than a `ui/` import because labs/ sits below ui/ and the lint rule enforces it.
    */
   units(): 'si' | 'imperial';
+  /**
+   * Sound and touch a lab may trigger directly (16 §10.5, §10.4) — the hook clack, a
+   * detent buzz. Impact FX stay on the bus; this is only for what a lab CAUSES itself.
+   */
+  fx: {
+    play(voice: VoiceId, gain?: number, rate?: number): void;
+    haptic(intensity01: number): void;
+  };
+  /**
+   * The transform ring buffer (16 §9). `track`/`untrack` are for lab PROPS (pads, the
+   * hook) — entities are tracked by the app; `markNow` stamps the impact frame;
+   * `play` freezes the world and runs the clip, following `followId` unless reduced
+   * motion forbids it. All of it no-ops gracefully when nothing is recorded.
+   */
+  replay: {
+    track(id: number, read: (outP: Vec3, outQ: Quat) => void): void;
+    untrack(id: number): void;
+    markNow(): ReplayMark;
+    play(mark: ReplayMark, preS: number, postS: number, followId?: EntityId): void;
+    isPlaying(): boolean;
+  };
 }
 
 /** One button a lab wants offered. */
 export interface LabControl {
   label: string;
   onSelect(): void;
+}
+
+/*
+ * The lab panel contract (16 §11.5) — 15 §8.4's WeighPanelModel made lab-agnostic.
+ * A lab DESCRIBES its panel; `ui/labpanel.ts` renders it with keyed DOM and instant
+ * textContent swaps (13 §7). Weigh's cards and Sandbox's line-ups move onto this in
+ * D3; the Drop Tower's panel is born on it in D2/D3.
+ */
+
+export interface PanelReading {
+  label: string;
+  value: string;
+  sub?: string;
+  /** Dimmed: live but not yet vouched for — the scale's SETTLING treatment (15 §7.7). */
+  provisional?: boolean;
+}
+
+export interface PanelFact {
+  k: string;
+  v: string;
+  v2?: string;
+}
+
+export type PanelControl =
+  | {
+      kind: 'slider';
+      id: string;
+      label: string;
+      min: number;
+      max: number;
+      step?: number;
+      value: number;
+      /** Tick positions in raw slider units; rendering maps them linearly. */
+      ticks?: readonly number[];
+      /** The human reading of a raw value — the bubble and the value line. */
+      format(v: number): { text: string; sub?: string };
+      onChange(v: number, committed: boolean): void;
+    }
+  | {
+      kind: 'segmented';
+      id: string;
+      label: string;
+      value: string;
+      options: readonly { id: string; label: string }[];
+      onChange(id: string): void;
+    }
+  | {
+      kind: 'toggle';
+      id: string;
+      label: string;
+      value: boolean;
+      onChange(on: boolean): void;
+    };
+
+export interface PanelAction {
+  id: string;
+  label: string;
+  /** Takes the accent while its lab is mounted (13 §2.1 as amended by 16 §13.5). */
+  primary?: boolean;
+  disabled?: boolean;
+  onSelect(): void;
+}
+
+export interface LabPanelModel {
+  id: string;
+  title: string;
+  status: { text: string; tone: 'neutral' | 'ok' | 'warn' | 'bad' };
+  /** The one big number (13 §3's --t-xl). */
+  primary?: PanelReading;
+  secondary?: readonly PanelReading[];
+  facts: readonly PanelFact[];
+  controls: readonly PanelControl[];
+  actions: readonly PanelAction[];
+  /** Live-region text; spoken when it CHANGES, throttled — never numeric spam. */
+  announce?: string;
+}
+
+export interface LabPanelHandle {
+  update(next: LabPanelModel): void;
+  dispose(): void;
 }
 
 /**
@@ -56,11 +161,11 @@ export interface LabControl {
  * uses, so a lab never learns whether it is in a desktop panel or a bottom sheet.
  */
 export interface LabUi {
+  /** @deprecated D3 moves every lab onto `mountPanel`; this survives until then. */
   setControls(groupLabel: string, controls: readonly LabControl[]): void;
+  mountPanel(model: LabPanelModel): LabPanelHandle;
   toast(message: string): void;
 }
-
-export type LabId = 'sandbox' | 'weigh';
 
 /**
  * The lab lifecycle (15 §8.1).
@@ -74,6 +179,13 @@ export type LabId = 'sandbox' | 'weigh';
 export interface Lab {
   id: LabId;
   title: string;
+  /**
+   * Whether entering this lab (a tab switch, a Reset, the boot) spawns one starter
+   * cube. The Sandbox does — the first thud within seconds is its whole opening move
+   * (01). The instrument labs do NOT (user decision 2026-08-24): a weigh station or a
+   * drop tower greets you as a cleared bench, and the spawner is right there.
+   */
+  spawnOnEntry?: boolean;
   build(ctx: LabContext): void;
   /** Pre-solver: apply the instrument's own forces and torques. */
   beforePhysics?(dt: number): void;
@@ -88,6 +200,14 @@ export interface Lab {
    */
   reset?(): void;
   teardown(): void;
+  /**
+   * EVERY step's impacts (usually an empty list), AFTER `afterPhysics` and the replay
+   * record, BEFORE the bus fan-out — the Drop signal's measurement hook (16 §11.1).
+   * A lab must not subscribe to the bus for its own measurement: subscription order
+   * is not a contract, and this ordering is. Called each fixed step so a signal can
+   * tick between impacts too.
+   */
+  onImpacts?(events: readonly ImpactEvent[]): void;
   /**
    * Where this lab would rather a new cube appeared, in world space.
    *
@@ -174,6 +294,13 @@ export class LabManager {
     this.#active?.afterPhysics?.(dt);
   }
 
+  onImpacts(events: readonly ImpactEvent[]): void {
+    // Every step, empty or not: the Drop signal TICKS here (altimeter, rest dwell),
+    // not just on eventful steps — a hook that only fired on impacts would freeze the
+    // measurement between them.
+    this.#active?.onImpacts?.(events);
+  }
+
   render(alpha: number): void {
     this.#active?.render?.(alpha);
   }
@@ -202,6 +329,10 @@ async function loadLab(id: LabId): Promise<Lab> {
     case 'weigh': {
       const mod = await import('./weigh/index.ts');
       return new mod.WeighLab();
+    }
+    case 'drop': {
+      const mod = await import('./drop/index.ts');
+      return new mod.DropLab();
     }
     default:
       throw new Error(`lab "${String(id)}" is not built`);

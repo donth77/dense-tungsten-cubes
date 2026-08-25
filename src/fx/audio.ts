@@ -29,7 +29,10 @@ export type VoiceId =
   | 'thump_rubber'
   | 'fumpf_foam'
   | 'tick_ice'
-  | 'crack_concrete';
+  | 'crack_concrete'
+  | 'thump_sand'
+  | 'boing_trampoline'
+  | 'clack_hook';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -180,6 +183,49 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
     noiseDecayS: 0.035,
     noiseQ: 0.7,
   },
+  /*
+   * Sand — a dead granular WHUMP (16 §10.5). Almost all noise: sand has no ringing
+   * body, just a broad low shove of displaced grains, so the noise term carries it
+   * and the tonal part is a formality.
+   */
+  thump_sand: {
+    freq: 66,
+    partials: [1, 1.83, 2.62],
+    decayS: 0.1,
+    noise: 0.85,
+    noiseHz: 750,
+    noiseDecayS: 0.09,
+    noiseQ: 0.4,
+    thump: 0.5,
+    thumpHz: 44,
+  },
+  /*
+   * Trampoline — the BOING (16 §10.5). The recipe format has no pitch glide, so the
+   * wobble comes from close inharmonic partials beating against each other over a
+   * long-for-this-table decay; the fabric slap is the short noise burst on top.
+   */
+  boing_trampoline: {
+    freq: 92,
+    partials: [1, 1.07, 2.13, 3.4],
+    decayS: 0.42,
+    noise: 0.2,
+    noiseHz: 420,
+    noiseDecayS: 0.04,
+    noiseQ: 1.6,
+  },
+  /*
+   * The winch hook's release CLACK (16 §6.1) — the one voice no impact ever picks;
+   * the Drop lab plays it through `play()`. Bright, tiny, over in 40 ms.
+   */
+  clack_hook: {
+    freq: 1860,
+    partials: [1, 1.78, 2.94],
+    decayS: 0.035,
+    noise: 0.5,
+    noiseHz: 3300,
+    noiseDecayS: 0.012,
+    noiseQ: 1.3,
+  },
 };
 
 const METAL_VOICE: Record<MetalId, VoiceId> = {
@@ -257,6 +303,16 @@ export class AudioBus {
   readonly #onVisibility = (): void => {
     if (document.visibilityState === 'visible') void this.#ctx?.resume();
   };
+
+  /**
+   * A one-shot on demand — the first non-impact trigger (16 §10.5). Labs reach it
+   * through `LabContext.fx`, never by import. Same pipeline as impacts: polyphony
+   * cap, oldest-steals, master gain, mute; silent before unlock, like everything.
+   */
+  play(voice: VoiceId, gain = 0.5, rate = 1): void {
+    if (!this.#ctx || this.#muted) return;
+    this.#play(voice, Math.max(0, Math.min(1, gain)), rate);
+  }
 
   setMuted(muted: boolean): void {
     this.#muted = muted;

@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  IN_PER_M,
+  LB_PER_KG,
+  M_PER_IN,
   cubeSide,
   density,
   energy,
   force,
-  IN_PER_M,
-  LB_PER_KG,
   length,
   mass,
   massFixed,
-  M_PER_IN,
+  momentum,
   percent,
   speed,
   volume,
@@ -117,5 +118,20 @@ describe('the other formatters', () => {
     expect(energy(Infinity).primary).toBe('—');
     expect(cubeSide(NaN).primary).toBe('—');
     expect(density(NaN).primary).toBe('—');
+  });
+});
+
+describe('momentum (16 §8.2)', () => {
+  it('leads SI with the lb·ft/s subtitle, and flips with the setting', () => {
+    const si = momentum(264);
+    expect(si.primary).toBe('264 kg·m/s');
+    expect(si.secondary).toBe('1910 lb·ft/s');
+    const imp = momentum(264, 'imperial');
+    expect(imp.primary).toBe('1910 lb·ft/s');
+    expect(imp.secondary).toBe('264 kg·m/s');
+  });
+
+  it('guards non-finite input like every formatter', () => {
+    expect(momentum(Number.NaN).primary).toBe('—');
   });
 });

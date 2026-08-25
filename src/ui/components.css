@@ -620,9 +620,13 @@
 .labpanel {
   position: absolute;
 }
+/* Desktop and tablet: the RIGHT side, over the empty stage half. The spawner owns the
+   left column, and the Drop panel stacked under it collided with it outright on an
+   800px-tall window (screenshot review 2026-08-24). An instrument panel on the right
+   is also simply where a bench instrument's readout sits. */
 #app.desktop .labpanel,
 #app.tablet .labpanel {
-  left: calc(var(--s5) + var(--safe-l));
+  right: calc(var(--s5) + var(--safe-r));
   bottom: calc(var(--s5) + var(--safe-b));
 }
 #app.phone-portrait .labpanel {
@@ -819,4 +823,118 @@
 /* Lab controls are actions, not toggles — no pressed state to express. */
 .chip.action[aria-pressed] {
   background: var(--card2);
+}
+
+/* ---------------------------------------------------------------------------
+   Lab panel model renderer (16 §11.5) — shares .labpanel-inner's card
+   --------------------------------------------------------------------------- */
+
+.lp {
+  width: 292px;
+  gap: var(--s2);
+}
+.lp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s3);
+}
+.lp-status {
+  font: 600 var(--t-micro) / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink2);
+  text-align: right;
+}
+.lp-status[data-tone='ok'] {
+  color: var(--ok);
+}
+.lp-status[data-tone='warn'] {
+  color: var(--warn);
+}
+.lp-status[data-tone='bad'] {
+  color: var(--bad);
+}
+.lp-primary {
+  font: 600 var(--t-xl) / 1.1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.lp-primary.provisional {
+  color: var(--ink2);
+}
+.lp-primary-sub {
+  font: 400 var(--t-sm) / 1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink2);
+}
+.lp-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lp-fact {
+  display: grid;
+  grid-template-columns: 68px 1fr auto;
+  gap: var(--s2);
+  align-items: baseline;
+}
+.lp-fact-v {
+  font: 600 var(--t-sm) / 1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.lp-fact-v2 {
+  font: 400 var(--t-sm) / 1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink3);
+}
+.lp-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.lp-control-row {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  justify-content: space-between;
+}
+.lp-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+.lp-seg-opt[aria-checked='true'],
+.lp-toggle[aria-checked='true'] {
+  background: var(--tung);
+  border-color: var(--tung);
+  color: var(--bg);
+}
+.lp-actions {
+  display: flex;
+  gap: var(--s2);
+}
+.lp-actions .primary {
+  flex: 1;
+  min-height: var(--tap);
+}
+/* Screen-reader live region: present, silent, invisible. */
+.lp-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* A disabled verb must look it — an enabled-looking button that eats clicks reads as
+   a broken feature, which is exactly how the Drop lab's HOIST read (2026-08-24). */
+.primary:disabled,
+.chip:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.primary:disabled:active {
+  background: var(--acc);
 }

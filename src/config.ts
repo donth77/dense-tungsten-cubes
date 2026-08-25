@@ -702,6 +702,121 @@ export const config = {
       atStopMarginDeg: 1.0,
     },
   },
+
+  /**
+   * The Drop Tower's air column (16 §6.3) — quadratic drag, AIR/VACUUM toggleable,
+   * applied by the lab and by nothing else. Fluid (M4) reuses the model with its own
+   * density. D0 measured the 60 Hz explicit scheme within 0.11 % of the analytic law.
+   */
+  /** FX numbers (16 §10). Haptics only for now; shake and particles land in D3. */
+  fx: {
+    hapticTickMs: 8,
+    hapticImpactBaseMs: 10,
+    hapticImpactScaleMs: 40,
+    /** Below this delivered energy an impact earns no buzz at all. */
+    hapticImpactMinJ: 2,
+  },
+
+  aero: {
+    rhoAirKgM3: 1.225,
+    /** Cube face-on drag coefficient (02's formula sheet); the drop is carried level. */
+    cdFaceOn: 1.05,
+  },
+
+  drop: {
+    /*
+     * The compliant pads (16 §7.3, numbers measured in D0 and pinned by
+     * tests/physics/drop.test.ts). See labs/shared/compliant-pad.ts for what each
+     * parameter does and the failures behind the design.
+     */
+    pads: {
+      trampoline: {
+        padKg: 1.5,
+        travelM: 0.25,
+        /**
+         * The mat needs its own travel VOLUME under it: mounted 5 cm off the stage, a
+         * 25 cm-travel mat had 4 cm of usable stroke before its body met the stage
+         * floor — no stored energy, no throw, every catch read ABSORBED (caught by
+         * drop-lab.test.ts). A real mini-tramp stands about this tall.
+         */
+        restCentreYM: 0.3,
+        /** A 2 kg cube from 2 m (39 J) uses 60 % of travel. */
+        kNpm: 3470,
+        /** ζ ≈ 0.08 on the bare pad — the mat stays alive. */
+        dampingImplicit: 7.7,
+        surface: 'trampoline',
+      },
+      foam: {
+        padKg: 1.0,
+        travelM: 0.12,
+        /** The block's top skin: travel + a whisker of clearance above the stage. */
+        restCentreYM: 0.13,
+        /** A 4 in W (185 N) sags 50 mm at rest. */
+        kNpm: 3700,
+        /** Critically damped under a load: no wobble, no bounce. */
+        zetaLoaded: 1.0,
+        /** Rate-controlled memory: within 2 mm of rest in ln(25)·τ ≈ 1 s (10 §4.9). */
+        creepTauS: 0.3,
+        surface: 'foam',
+      },
+    },
+    /** The winch (16 §6.1–6.2). Heights are of the cube's BOTTOM FACE above the plate. */
+    tower: {
+      minHM: 0.1,
+      maxHM: 20,
+      defaultHM: 2,
+      /** Trapezoidal hoist: 2 m in ~0.9 s, the full 20 m in ~3.8 s. */
+      hoistSpeedMps: 6,
+      hoistAccelMps2: 12,
+      /**
+       * The CABLE END's rest height (17 §3): the carriage hangs 0.89 m below it, so
+       * at rest the open bay floats with its door plane ~0.46 m over the plate.
+       */
+      restCableEndYM: 1.35,
+      /** The capture nudge (17 §3.3): the cube rises this much so the doors can close under it. */
+      clampGapM: 0.006,
+      /** How fast a carried cube slerps level after the clamp (1/s). */
+      levelRate: 10,
+    },
+    /** The floor plate (16 §7.1): one floor mounted at a time, top face at plateTopYM. */
+    plate: {
+      halfM: 0.6,
+      thicknessM: 0.02,
+      topYM: 0.02,
+    },
+    /** Reading the drop (16 §8.1, §12.2). */
+    signal: {
+      restSpeedMps: 0.05,
+      restAngSpeedRadS: 0.2,
+      restDwellS: 0.5,
+      /** The verdict is never withheld forever: settling ends here regardless. */
+      settleTimeoutS: 4,
+    },
+    /** Verdict thresholds (16 §7.6), on the DELIVERED energy E_n (02 §7 anchors). */
+    verdicts: {
+      chipJ: 200,
+      crackJ: 400,
+      dentJ: 10,
+      ringJ: 5,
+      craterJ: 10,
+      /** Rebound fraction of the drop height that counts as BOUNCED / CAUGHT. */
+      bounceFrac: 0.1,
+    },
+    /** Where spawned cubes stage, in front of the plate (16 §5.4). */
+    staging: { zM: 0.55, rowHalfM: 0.42, gapM: 0.02 },
+    /** 16 §5.1: frame the landing zone; the tower rises out of frame by design. */
+    camera: { radiusM: 1.3, centreYM: 0.45 },
+    /*
+     * The capacity gates (16 §7.3 amendment): past ½mv², the mat is already beaten
+     * and the landing goes to the rigid crushed-mat regime. Trampoline: above the
+     * spring's 108 J because the fabric eats its share first — a 2 in W arriving
+     * with 116 J measurably does NOT reach the stop. Foam: just above its 27 J.
+     */
+    gates: {
+      trampolineBottomOutJ: 150,
+      foamBottomOutJ: 30,
+    },
+  },
 };
 // Deliberately NOT `as const`: the calibration page writes through this object live
 // (08 §5.4), and readonly literal types would make that a type error.

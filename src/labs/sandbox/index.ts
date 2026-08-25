@@ -47,6 +47,7 @@ const STAGE_RADIUS_M = 0.55;
 export class SandboxLab implements Lab {
   readonly id = 'sandbox' as const;
   readonly title = 'Sandbox';
+  readonly spawnOnEntry = true;
 
   #ctx: LabContext | null = null;
   readonly #bodies: BodyHandle[] = [];

@@ -5,6 +5,7 @@ import { METALS } from '../data/metals.ts';
 import { SURFACES } from '../data/surfaces.ts';
 import { E_REF_PAIR, MU_REF_PAIR, factor } from '../data/contact.ts';
 import type {
+  BodyKind,
   BodyHandle,
   ColliderPart,
   CompoundBodySpec,
@@ -745,6 +746,38 @@ export class PhysicsWorld {
 
   setAngularDamping(h: BodyHandle, d: number): void {
     this.#recs.get(h)?.body.setAngularDamping(d);
+  }
+
+  /**
+   * Switch a body's kind in place — the jointless winch and the pads' crushed regime
+   * (16 §6.2, §7.3). D0 verified the round-trip against raw Rapier: pose, colliders
+   * and mass properties survive; velocity does NOT get zeroed here, because what a
+   * release means (16: zero velocity at exactly h) is the caller's statement to make.
+   */
+  setBodyKind(h: BodyHandle, kind: BodyKind): void {
+    const rec = this.#recs.get(h);
+    if (!rec) return;
+    const t =
+      kind === 'dynamic'
+        ? RAPIER.RigidBodyType.Dynamic
+        : kind === 'kinematic'
+          ? RAPIER.RigidBodyType.KinematicPositionBased
+          : RAPIER.RigidBodyType.Fixed;
+    rec.body.setBodyType(t, true);
+  }
+
+  bodyKindOf(h: BodyHandle): BodyKind {
+    const rec = this.#recs.get(h);
+    if (!rec) return 'fixed';
+    switch (rec.body.bodyType()) {
+      case RAPIER.RigidBodyType.Dynamic:
+        return 'dynamic';
+      case RAPIER.RigidBodyType.KinematicPositionBased:
+      case RAPIER.RigidBodyType.KinematicVelocityBased:
+        return 'kinematic';
+      default:
+        return 'fixed';
+    }
   }
 
   /**

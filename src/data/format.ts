@@ -131,6 +131,15 @@ export function energy(j: number): Reading {
   return { primary: `${sig(j)} J`, secondary: `${sig(j * 0.7375621493)} ft·lb` };
 }
 
+/** Momentum, for the impact readout (16 §8.2). kg·m/s leads; lb·ft/s is the subtitle. */
+export function momentum(kgMps: number, units: Units = 'si'): Reading {
+  if (bad(kgMps)) return NO_READING;
+  // lb·ft/s per kg·m/s: 2.2046226218 lb/kg × 3.280839895 ft/m.
+  const si = `${sig(kgMps)} kg·m/s`;
+  const imp = `${sig(kgMps * 7.2330114643)} lb·ft/s`;
+  return units === 'si' ? { primary: si, secondary: imp } : { primary: imp, secondary: si };
+}
+
 export function speed(mps: number, units: Units = 'si'): Reading {
   if (bad(mps)) return NO_READING;
   const si = `${sig(mps)} m/s`;

@@ -199,7 +199,9 @@ export class InputRouter {
     const hit = this.physics.raycast(ray.origin, ray.direction);
     const entity = hit ? this.entities.byBody(hit.handle) : undefined;
 
-    if (hit && entity) {
+    // A winched (kinematic) cube cannot be grabbed — forces do nothing to it, so a
+    // grab would be a lie the meter then repeats. Tap-select still works (pointerup).
+    if (hit && entity && entity.kind === 'dynamic') {
       this.#hitPoint.set(hit.point.x, hit.point.y, hit.point.z);
       this.hand.grab(entity.id, this.#hitPoint, this.camera);
       // Re-aim immediately through the offset ray so a touched cube rises clear of

@@ -111,4 +111,35 @@ export const SURFACES: Readonly<Record<SurfaceId, SurfaceSpec>> = {
     roughness: 0.12,
     metalness: 0,
   },
+  /*
+   * The Drop Tower floors (16 §7.1). Sand kills a bounce almost completely — its 0.05
+   * is the lowest in the table, and the crater decal is what makes the energy visible
+   * (10 §4.9: no geometry change in v1).
+   */
+  sand: {
+    id: 'sand',
+    label: 'Sand',
+    friction: 0.6,
+    restitution: 0.05,
+    voice: 'thump_sand',
+    baseColorLinear: [0.43, 0.32, 0.18],
+    roughness: 0.96,
+    metalness: 0,
+  },
+  /*
+   * The trampoline FABRIC, not the trampoline: the mat's throw comes from the membrane
+   * contact (a 1.5 kg mat is a wall to a 44 g cube), while the travel and the capacity
+   * gate defeat heavy cubes (16 §7.3 amendment). 0.85 is the vs-reference-metal pair
+   * value, like every number in this column.
+   */
+  trampoline: {
+    id: 'trampoline',
+    label: 'Trampoline',
+    friction: 0.8,
+    restitution: 0.85,
+    voice: 'boing_trampoline',
+    baseColorLinear: [0.04, 0.042, 0.05],
+    roughness: 0.9,
+    metalness: 0,
+  },
 };

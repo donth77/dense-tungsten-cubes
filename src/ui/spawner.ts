@@ -1,7 +1,8 @@
 import { astmClassLabel, METALS, WHA_PURITY_DEFAULT, whaDensity } from '../data/metals.ts';
+import { bindSlider } from './slider.ts';
 import { cubeSide, density, M_PER_IN, mass, percent } from '../data/format.ts';
 import { cubeMassKg } from '../data/metals.ts';
-import { button, el, setClass, setText } from './dom.ts';
+import { button, el, setText } from './dom.ts';
 import type { SettingsStore } from './settings.ts';
 import type { CubeSpec, MetalId } from '../types.ts';
 
@@ -316,49 +317,4 @@ export function snapToTicks(
     }
   }
   return bestErr <= tolerance ? best : value;
-}
-
-/**
- * Slider plumbing: live updates while dragging, a snap on release, the value bubble
- * (12 §4), and a capability-gated haptic tick — Android has `navigator.vibrate`, iOS
- * Safari does not, so it is feature-detected rather than assumed.
- */
-function bindSlider(
-  input: HTMLInputElement,
-  wrapper: HTMLElement,
-  bubble: HTMLElement,
-  onChange: (raw: number, committed: boolean) => void,
-): void {
-  let lastSnapped: number | null = null;
-
-  const position = (): void => {
-    const min = Number(input.min);
-    const max = Number(input.max);
-    const frac = (Number(input.value) - min) / (max - min || 1);
-    bubble.style.left = `${10 + frac * (wrapper.clientWidth - 20)}px`;
-  };
-
-  input.addEventListener('input', () => {
-    onChange(Number(input.value), false);
-    position();
-  });
-  input.addEventListener('change', () => {
-    onChange(Number(input.value), true);
-    position();
-    const now = Number(input.value);
-    if (now !== lastSnapped) {
-      lastSnapped = now;
-      if (typeof navigator.vibrate === 'function') navigator.vibrate(8);
-    }
-  });
-  const start = (): void => {
-    setClass(wrapper, 'dragging', true);
-    position();
-  };
-  const end = (): void => setClass(wrapper, 'dragging', false);
-  input.addEventListener('pointerdown', start);
-  input.addEventListener('focus', start);
-  input.addEventListener('pointerup', end);
-  input.addEventListener('pointercancel', end);
-  input.addEventListener('blur', end);
 }

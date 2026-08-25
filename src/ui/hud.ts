@@ -1,4 +1,7 @@
 import './components.css';
+import { LabPanel } from './labpanel.ts';
+import type { LabPanelHandle, LabPanelModel } from '../labs/lab.ts';
+import type { LabId } from '../labs/lab.ts';
 import { button, clear, el, setText } from './dom.ts';
 import { InfoCard } from './infocard.ts';
 import { LayoutManager } from './layout.ts';
@@ -22,7 +25,7 @@ export type HandModeId = 'one' | 'two' | 'forklift';
 
 export interface HudCallbacks extends SpawnerCallbacks {
   onResetView(): void;
-  onLabChange(lab: 'sandbox' | 'weigh'): void;
+  onLabChange(lab: LabId): void;
   onHandMode(mode: HandModeId): void;
   onDeleteSelected(): void;
   /**
@@ -54,7 +57,7 @@ export class Hud {
   #forkliftUnlocked = false;
   /** Where labs mount their own panel (08 §9). */
   readonly labPanel: HTMLElement;
-  #tabs!: Record<'sandbox' | 'weigh', HTMLElement>;
+  #tabs!: Record<LabId, HTMLElement>;
 
   constructor(
     private readonly root: HTMLElement,
@@ -125,7 +128,7 @@ export class Hud {
      * tells a screen-reader user nothing. Roving arrow-key focus lands with the rest of
      * the Weigh panel work.
      */
-    const mkTab = (label: string, lab: 'sandbox' | 'weigh'): HTMLElement =>
+    const mkTab = (label: string, lab: LabId): HTMLElement =>
       el('button.tab', {
         type: 'button',
         role: 'tab',
@@ -136,8 +139,18 @@ export class Hud {
           this.cb.onLabChange(lab);
         },
       });
-    this.#tabs = { sandbox: mkTab('Sandbox', 'sandbox'), weigh: mkTab('Weigh', 'weigh') };
-    const tabs = el('div.tabs', { role: 'tablist' }, this.#tabs.sandbox, this.#tabs.weigh);
+    this.#tabs = {
+      sandbox: mkTab('Sandbox', 'sandbox'),
+      weigh: mkTab('Weigh', 'weigh'),
+      drop: mkTab('Drop', 'drop'),
+    };
+    const tabs = el(
+      'div.tabs',
+      { role: 'tablist' },
+      this.#tabs.sandbox,
+      this.#tabs.weigh,
+      this.#tabs.drop,
+    );
 
     this.#toast = el('div.toast', { role: 'status', 'aria-live': 'polite' });
     this.help = new HelpPanel(() => this.#helpBtn.focus());
@@ -197,7 +210,7 @@ export class Hud {
   }
 
   /** Moves the selected state. Called on click, and by app.ts when a lab switch lands. */
-  setActiveTab(lab: 'sandbox' | 'weigh'): void {
+  setActiveTab(lab: LabId): void {
     for (const [id, node] of Object.entries(this.#tabs)) {
       node.setAttribute('aria-selected', String(id === lab));
     }
@@ -295,10 +308,28 @@ export class Hud {
   /**
    * Renders the controls a lab asked for. Labs describe, the HUD builds — see LabUi.
    */
+  /** Mounts a lab's panel model (16 §11.5); replaces whatever idiom was there. */
+  mountPanel(model: LabPanelModel): LabPanelHandle {
+    this.#panelView?.dispose();
+    this.#panelView = new LabPanel(this.labPanel);
+    const handle = this.#panelView.mount(model);
+    return {
+      update: (next) => handle.update(next),
+      dispose: () => {
+        handle.dispose();
+        this.#panelView = null;
+      },
+    };
+  }
+
+  #panelView: LabPanel | null = null;
+
   setLabControls(
     groupLabel: string,
     controls: readonly { label: string; onSelect(): void }[],
   ): void {
+    this.#panelView?.dispose();
+    this.#panelView = null;
     this.labPanel.replaceChildren();
     if (controls.length === 0) return;
     this.labPanel.append(

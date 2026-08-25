@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { config } from '../config.ts';
 import { cubeMassKg } from '../data/metals.ts';
-import type { BodyHandle, CubeSpec, EntityId, Transform, Vec3 } from '../types.ts';
+import type { BodyKind, BodyHandle, CubeSpec, EntityId, Transform, Vec3 } from '../types.ts';
 import type { EventBus } from './events.ts';
 import type { PhysicsWorld } from './physics.ts';
 import { SELECTION_INFLATE, SelectionFade, selectionMotionSpeed } from './render.ts';
@@ -21,6 +21,12 @@ export interface Entity {
   /** Pre-step linear velocity, for audio and the Hand's damping term. */
   lastVel: Vec3;
   heldBy: 'hand' | null;
+  /**
+   * Mirrors the body's solver kind (16 §6.2). 'kinematic' while the winch carries it;
+   * everything else in the app is 'dynamic' for life. Kept here so UI and eviction
+   * logic can ask without a physics query.
+   */
+  kind: BodyKind;
 }
 
 /**
@@ -102,6 +108,7 @@ export class EntityStore {
       curr: cloneTransform(t),
       lastVel: { x: 0, y: 0, z: 0 },
       heldBy: null,
+      kind: 'dynamic',
     };
     this.#map.set(id, entity);
     this.#byBody.set(body, id);
@@ -163,6 +170,14 @@ export class EntityStore {
   }
 
   /** Purity edits mutate in place — the body keeps its pose, velocity, contacts and grab. */
+  /** Flip an entity's body kind in place — the winch's carry/release (16 §6.2). */
+  setKind(id: EntityId, kind: BodyKind): void {
+    const e = this.#map.get(id);
+    if (!e || e.kind === kind) return;
+    this.physics.setBodyKind(e.body, kind);
+    e.kind = kind;
+  }
+
   setPurity(id: EntityId, purityPctW: number, densityKgM3: number): void {
     const e = this.#map.get(id);
     if (!e || e.spec.metal !== 'W') return;
@@ -178,7 +193,9 @@ export class EntityStore {
     // Oldest un-held first: yanking the cube out of the player's hand to make room is
     // the one eviction that would feel like a bug.
     for (const e of this.#map.values()) {
-      if (e.heldBy === null) {
+      // Never the held cube, and never a winched (kinematic) one: yanking either out
+      // from under the player to make room is the eviction that feels like a bug.
+      if (e.heldBy === null && e.kind === 'dynamic') {
         this.despawn(e.id);
         return;
       }
