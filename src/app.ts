@@ -4,7 +4,7 @@ import { EntityStore } from './core/entities.ts';
 import { EventBus } from './core/events.ts';
 import { ReplayPlayer, ReplayRecorder } from './core/replay.ts';
 import type { ReplayClip } from './core/replay.ts';
-import { hapticImpact } from './fx/haptics.ts';
+import { enableHaptics, hapticImpact } from './fx/haptics.ts';
 import { Loop } from './core/loop.ts';
 import type { Stepper } from './core/loop.ts';
 import type { PhysicsWorld } from './core/physics.ts';
@@ -689,6 +689,8 @@ export class App implements Stepper {
     const fire = (): void => {
       for (const k of kinds) document.removeEventListener(k, fire, true);
       void this.audio.unlock();
+      // Haptics answer to the same policy, and to the same gesture.
+      enableHaptics();
     };
     for (const k of kinds) document.addEventListener(k, fire, true);
     this.#teardown.push(() => {

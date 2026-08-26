@@ -131,19 +131,24 @@ export class DropLab implements Lab {
 
   /** Release the batch. The pad's regime is decided HERE, before anything falls. */
   dropNow(): void {
-    if (!this.#tower.centredForDrop) {
-      // Crane discipline: the load settles over the target, THEN releases.
-      this.#pendingDrop = true;
+    /*
+     * A click with cargo aboard is NEVER lost.
+     *
+     * This used to enumerate the states that may swallow a press — not centred yet,
+     * then the armed→hoisting flap — and each was found the hard way, the second one
+     * by a smoke run that hung for 15 s on a dead button. A third still ate a click
+     * landing within ~300 ms of ARMED. Enumerating windows is the losing strategy, so
+     * the rule is inverted: if there is something to drop and the winch is not ready
+     * to drop it, LATCH, and let afterPhysics release the moment it is armed and
+     * centred (crane discipline: the load settles over the target, then releases).
+     * The only silent no-op left is the honest one — no cargo, nothing to do.
+     */
+    const ready =
+      this.#tower.phase === 'armed' && this.#tower.centredForDrop && this.#tower.hasCargo;
+    if (!ready) {
+      if (this.#tower.hasCargo) this.#pendingDrop = true;
       return;
     }
-    if (this.#tower.phase === 'hoisting' && this.#tower.hasCargo) {
-      // A transient armed→hoisting flap must never EAT the click (smoke-caught,
-      // 2026-08-25: DROP landed during the flap, no-oped silently, and the run
-      // hung). Latch it; afterPhysics releases the moment the winch re-arms.
-      this.#pendingDrop = true;
-      return;
-    }
-    if (this.#tower.phase !== 'armed' || !this.#tower.hasCargo) return;
     const cargo: Entity[] = [];
     for (const id of this.#tower.cargoIds) {
       const e = this.#ctx.entities.get(id);

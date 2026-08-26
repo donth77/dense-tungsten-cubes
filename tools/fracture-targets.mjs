@@ -210,6 +210,21 @@ function fractureGlb(srcPath, meshNameRe, fragmentCount, outPath) {
 fractureGlb('public/watermelon.glb', /Watermelon_Full/, 12, 'public/melon-frags.glb');
 fractureGlb('public/wine-glass.glb', /Object_4|Object_0/, 10, 'public/glass-frags.glb');
 /*
+ * The cinder block (18 §6 C3): a SOLID brittle volume, which is exactly what Voronoi
+ * fracture is for — the same case as the melon and the goblet, and not the egg (a
+ * shell) or the pane (a sheet), both of which needed authored geometry. Non-Convex
+ * because the block is hollow: its two cores are part of the shape.
+ */
+fractureGlb('public/cinder-block.glb', /CinderBlock/, 14, 'public/block-frags.glb');
+
+/*
+ * The plinth, for the same reason: it is a solid stone volume. Marble is STRONGER
+ * than a hollow concrete block (roughly 50-180 MPa against ~14 MPa on net area), so
+ * it sits at the top of the structure ladder — but a big enough cube still takes it.
+ */
+fractureGlb('public/pedestal.glb', /./, 12, 'public/pedestal-frags.glb');
+
+/*
  * NOT the egg. Voronoi-fracturing an egg as a SOLID gives chunky wedges, and an egg
  * is a 0.35 mm brittle SHELL around a liquid — it caves in and its curved plates
  * stay put in the puddle (user review, 2026-08-25). The shell is authored as thin

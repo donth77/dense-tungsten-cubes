@@ -5,7 +5,21 @@ import { config } from '../config.ts';
  * `navigator.vibrate`, iOS Safari does not (12 §4), and the physics test runner has no
  * `navigator` at all.
  */
+/**
+ * Browsers refuse `navigator.vibrate` before the page has been touched, and log a
+ * console error for every attempt. The capability gate below is not enough on its
+ * own: a phone or tablet HAS the API, so a cube landing at boot — which is exactly
+ * what the Sandbox does — buzzed the error out before the player had touched
+ * anything (smoke caught it on the tablet viewport, 2026-08-26). The app arms this
+ * from the same first gesture that unlocks audio.
+ */
+let gestured = false;
+export function enableHaptics(): void {
+  gestured = true;
+}
+
 function vibrate(ms: number): void {
+  if (!gestured) return;
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
     navigator.vibrate(ms);
   }

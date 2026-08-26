@@ -69,6 +69,8 @@ let crush: Promise<{
   can: THREE.Object3D;
   egg: THREE.Object3D;
   block: THREE.Object3D;
+  blockFrags: FragChunk[];
+  plinthFrags: FragChunk[];
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }> | null = null;
@@ -265,6 +267,9 @@ export interface CrushAssets {
   egg: THREE.Object3D;
   /** A real cinder block, base-origined — the support pair under spanning targets. */
   block: THREE.Object3D;
+  /** Structure fragments: concrete for the blocks, marble for the plinth. */
+  blockFrags: FragChunk[];
+  plinthFrags: FragChunk[];
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }
@@ -290,6 +295,8 @@ export function loadCrushAssets(): Promise<CrushAssets> {
       can: a.can.clone(),
       egg: a.egg.clone(),
       block: a.block.clone(),
+      blockFrags: a.blockFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+      plinthFrags: a.plinthFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
       melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
       glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     });
@@ -301,25 +308,47 @@ export function loadCrushAssets(): Promise<CrushAssets> {
     loadScene('soda-can.glb'),
     loadScene('egg.glb'),
     loadScene('cinder-block.glb'),
+    loadScene('block-frags.glb'),
+    loadScene('pedestal-frags.glb'),
     loadScene('melon-frags.glb'),
     loadScene('glass-frags.glb'),
-  ]).then(([glass, pedestal, melon, can, egg, block, melonFragScene, glassFragScene]) => {
-    const glassSkin = skinOf(glass);
-    const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
-    return {
+  ]).then(
+    ([
       glass,
       pedestal,
       melon,
       can,
       egg,
       block,
-      melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
-        makeFleshMaterial(node.position.clone()),
-      ),
-      glassFrags: fragTemplates(glassFragScene, glassSkin, () => glassSkin ?? fallback),
-    };
-  });
+      blockFragScene,
+      plinthFragScene,
+      melonFragScene,
+      glassFragScene,
+    ]) => {
+      const glassSkin = skinOf(glass);
+      // Broken structure shows its raw interior: grey aggregate, pale stone.
+      const concreteMat = new THREE.MeshStandardMaterial({ color: 0x9a978f, roughness: 0.95 });
+      const marbleMat = new THREE.MeshStandardMaterial({ color: 0xe4e1d8, roughness: 0.6 });
+      const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
+      return {
+        glass,
+        pedestal,
+        melon,
+        can,
+        egg,
+        block,
+        blockFrags: fragTemplates(blockFragScene, skinOf(block), () => concreteMat),
+        plinthFrags: fragTemplates(plinthFragScene, skinOf(pedestal), () => marbleMat),
+        melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
+          makeFleshMaterial(node.position.clone()),
+        ),
+        glassFrags: fragTemplates(glassFragScene, glassSkin, () => glassSkin ?? fallback),
+      };
+    },
+  );
   return crush.then((a) => ({
+    blockFrags: a.blockFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+    plinthFrags: a.plinthFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     glass: a.glass.clone(),
     pedestal: a.pedestal.clone(),
     melonFull: melonPart(a.melon, /Full/),

@@ -21,11 +21,13 @@ import type { BodyHandle, EntityId, ImpactEvent, SurfaceId, Transform, Vec3 } fr
  * loading/hoisting and a FRESH one rises once the winch is armed overhead.
  */
 
-export type TargetId = 'none' | 'egg' | 'wine-glass' | 'soda-can' | 'pine-board' | 'watermelon';
+export type TargetId =
+  'none' | 'egg' | 'wine-glass' | 'glass-pane' | 'soda-can' | 'pine-board' | 'watermelon';
 export const TARGET_LABELS: Readonly<Record<TargetId, string>> = {
   none: 'None',
   egg: 'Egg',
   'wine-glass': 'Wine glass',
+  'glass-pane': 'Glass pane',
   'soda-can': 'Soda can',
   watermelon: 'Watermelon',
   'pine-board': 'Pine board',
@@ -78,6 +80,17 @@ export const TARGET_SPEC: Readonly<Record<Exclude<TargetId, 'none'>, TargetSpec>
     // 02 §7: an egg cracks from an 8-10 mm drop — that is 0.4 m/s.
     selfBreakMps: 0.45,
   },
+  'glass-pane': {
+    // 02 §7: a 4 mm annealed pane cracks to a hard point at ~0.5-2 J. (EN 12600's
+    // soft-body pendulum classes are 93/220/589 J — a different regime entirely,
+    // cited in 02 for honesty, and NOT what a tungsten cube does to a sheet.)
+    thresholdJ: 2,
+    massKg: 1.2,
+    verdict: 'shattered',
+    pedestal: false,
+    voice: 'tinkle_glass',
+    selfBreakMps: 1.2,
+  },
   'soda-can': {
     // 02 §7: 1 J dents, 5 J flattens (427–850 N buckling mapped at ~5 mm crush).
     thresholdJ: 5,
@@ -126,6 +139,27 @@ export const TARGET_IDS: readonly TargetId[] = [
 ];
 
 const GLASS_ID: EntityId = PROP_ID_BASE + 1;
+/** The structure under a target gets its own identity, so impacts can name it. */
+const SUPPORT_ID_BASE: EntityId = PROP_ID_BASE + 10;
+
+/**
+ * STRUCTURE (18 §6 C3, user 2026-08-26): the things a target stands on break too,
+ * at the top of the energy ladder. A hollow CMU is ~14 MPa on net area and a marble
+ * plinth 50-180, so the plinth is the harder of the two — and both are far above
+ * the 50 J board, which is the point: it should take a monster cube to reach them.
+ *
+ * Kind is what the rig fractures with and what the fragments are made of.
+ */
+interface SupportSpec {
+  thresholdJ: number;
+  massKg: number;
+  frags: (a: CrushAssets) => FragChunk[];
+}
+const SUPPORT_SPEC = {
+  block: { thresholdJ: 250, massKg: 17, frags: (a: CrushAssets) => a.blockFrags },
+  plinth: { thresholdJ: 450, massKg: 20, frags: (a: CrushAssets) => a.plinthFrags },
+} satisfies Record<string, SupportSpec>;
+type SupportKind = keyof typeof SUPPORT_SPEC;
 
 /**
  * How a target's pieces move when it breaks (realism audit, 2026-08-25). The audit's
@@ -206,6 +240,11 @@ const BOARD_Z = 0.305;
 const BOARD_T = 0.019;
 const BOARD_CREAK_MIN_J = 10;
 
+/** A 4 mm annealed sheet, spanning the same two blocks the board does. */
+const PANE_X = 0.4;
+const PANE_Z = 0.3;
+const PANE_T = 0.004;
+
 /** A large hen's egg (assets-lib/egg, baked 0.136x): 5.7 cm tall, 4.4 cm across. */
 const EGG_H = 0.057;
 const EGG_R = 0.022;
@@ -222,6 +261,7 @@ export class TargetRig {
   #rindMat: THREE.MeshStandardMaterial | null = null;
   #eggMat: THREE.Material | null = null;
   #pineMat: THREE.MeshStandardMaterial | null = null;
+  #paneMat: THREE.MeshPhysicalMaterial | null = null;
   #assetCache: CrushAssets | null = null;
   #shardMat: THREE.Material | null = null;
   #gen = 0;
@@ -236,7 +276,18 @@ export class TargetRig {
   #wasHit = false;
   #pendingBreakAt: Vec3 | null = null;
   #pendingKickJ = 0;
+  /** Who struck, and how fast — so the break can charge them for it and let them pass. */
+  #pendingStriker: { id: EntityId; vHit: number; massKg: number } | null = null;
   #sustainedSteps = 0;
+  /** Breakable structure under the target, with the pose each was born at. */
+  #supports: {
+    id: EntityId;
+    body: BodyHandle;
+    kind: SupportKind;
+    at: Vec3;
+    visual: THREE.Group;
+  }[] = [];
+  #pendingSupport: { id: EntityId; excessJ: number } | null = null;
   #canState: 'intact' | 'dent' | 'flat' = 'intact';
   #pendingDent = false;
   #pendingDentAt: Vec3 | null = null;
@@ -313,6 +364,14 @@ export class TargetRig {
     events: readonly ImpactEvent[],
     massOf: (id: EntityId) => number | null,
   ): 'broke' | 'hit' | null {
+    /*
+     * Structure is scanned FIRST and unconditionally. The guard below exits as soon
+     * as the target is broken, and that used to take the blocks with it: a cube that
+     * snapped the board and then came down on a block was never examined, so no cube
+     * could ever break structure (caught by the 15" pin). What the target is doing
+     * has nothing to do with whether the blocks under it survive.
+     */
+    for (const ev of events) this.#checkSupport(ev, massOf);
     if (!this.#deployed || this.#broken || this.#glass === null || this.#selected === 'none')
       return null;
     const spec = TARGET_SPEC[this.#selected];
@@ -367,6 +426,12 @@ export class TargetRig {
       if (arrivalJ >= spec.thresholdJ) {
         this.#pendingBreakAt = { ...ev.point };
         this.#pendingKickJ = arrivalJ - spec.thresholdJ;
+        const strikerId = ev.b === GLASS_ID && typeof ev.a === 'number' ? ev.a : null;
+        const strikerKg = strikerId === null ? null : massOf(strikerId);
+        this.#pendingStriker =
+          strikerId !== null && strikerKg !== null
+            ? { id: strikerId, vHit: ev.normalSpeedMps, massKg: strikerKg }
+            : null;
         // Broken NOW, swapped next step — the survived-judge must never see the
         // one-step gap between the hit and the swap (measured, 2026-08-25).
         this.#broken = true;
@@ -379,6 +444,7 @@ export class TargetRig {
 
   /** The queued swap (18 §5.2): one step after the hit, never inside the event drain. */
   beforePhysics(): void {
+    this.#collapseSupport();
     if (this.#pendingDent) {
       this.#pendingDent = false;
       // A same-step break outranks the dent.
@@ -409,9 +475,11 @@ export class TargetRig {
       this.#group.remove(this.#glassVisual);
       this.#glassVisual = null;
     }
+    this.#carryStrikerThrough();
     if (this.#selected === 'watermelon') this.#burstMelon(t, v, this.#pendingKickJ, at);
     else if (this.#selected === 'egg') this.#burstEgg(t, v, this.#pendingKickJ, at);
     else if (this.#selected === 'pine-board') this.#snapBoard(t, v, this.#pendingKickJ, at);
+    else if (this.#selected === 'glass-pane') this.#shatterPane(t, v, this.#pendingKickJ, at);
     else this.#spawnShards(t, v, this.#pendingKickJ, at);
     if (this.#selected !== 'none') this.#ctx.fx.play(TARGET_SPEC[this.#selected].voice, 1);
   }
@@ -471,6 +539,8 @@ export class TargetRig {
     this.#pendingBreakAt = null;
     this.#canState = 'intact';
     this.#sustainedSteps = 0;
+    this.#supports = [];
+    this.#pendingSupport = null;
     this.#pendingDent = false;
     this.#pendingDentAt = null;
     this.#canHolder = null;
@@ -489,8 +559,40 @@ export class TargetRig {
     this.#rindMat?.dispose();
   }
 
+  /**
+   * Make room before anything is born at plate centre.
+   *
+   * Every target here is BORN at its pose, and a body born inside a resting cube is
+   * an overlap the solver resolves the only way it can — by shoving. A cube left on
+   * the plate got punted off the stage when a target deployed on top of it (logged
+   * 2026-08-25). Sliding the cube straight out along its own bearing, at rest, is
+   * both cheap and legible: the cube ends up beside the target instead of in orbit.
+   */
+  #clearFootprint(rM: number): void {
+    const pw = this.#ctx.physics;
+    for (const e of this.#ctx.entities.all) {
+      // Carried cubes belong to the winch, and anything up at carriage height is
+      // nowhere near a target sitting on the plate.
+      if (e.kind !== 'dynamic' || e.curr.p.y > 0.6) continue;
+      const d = Math.hypot(e.curr.p.x, e.curr.p.z);
+      const need = rM + e.spec.sideM * 0.6;
+      if (d >= need) continue;
+      const ux = d > 1e-3 ? e.curr.p.x / d : 1;
+      const uz = d > 1e-3 ? e.curr.p.z / d : 0;
+      pw.setTransform(e.body, { x: ux * need, y: e.curr.p.y, z: uz * need }, true);
+    }
+  }
+
   deploy(): void {
     if (this.#selected === 'none' || this.#deployed) return;
+    // The span rigs are the widest; the glass and its plinth the narrowest.
+    this.#clearFootprint(
+      this.#selected === 'pine-board' || this.#selected === 'glass-pane'
+        ? SPAN_X + BLOCK_D / 2
+        : this.#selected === 'watermelon'
+          ? 0.22
+          : 0.11,
+    );
     if (this.#selected === 'watermelon') {
       this.#deployMelon();
       return;
@@ -507,22 +609,37 @@ export class TargetRig {
       this.#deployBoard();
       return;
     }
+    if (this.#selected === 'glass-pane') {
+      this.#deployPane();
+      return;
+    }
     this.#deployed = true;
     const pw = this.#ctx.physics;
     // Pedestal — born fixed at its pose, a steel column with a top plate.
+    const plinthAt = { x: 0, y: PEDESTAL_TOP_M / 2, z: 0 };
+    const plinthId = SUPPORT_ID_BASE as EntityId;
     const pedestal = pw.addCompound({
       kind: 'fixed',
-      at: { x: 0, y: PEDESTAL_TOP_M / 2, z: 0 },
+      at: plinthAt,
       parts: [
         {
           shape: { kind: 'cylinder', halfHeightM: PEDESTAL_TOP_M / 2, radiusM: 0.07 },
-          material: 'steel',
+          material: 'concrete',
         },
       ],
+      entityId: plinthId,
     });
     this.#bodies.push(pedestal);
     const pedGroup = new THREE.Group();
     this.#group.add(pedGroup);
+    // Marble, and breakable: 450 J of arrival takes it (18 §6 C3).
+    this.#supports.push({
+      id: plinthId,
+      body: pedestal,
+      kind: 'plinth',
+      at: plinthAt,
+      visual: pedGroup,
+    });
 
     // The glass — one light dynamic body with impact identity, resting on the cap.
     this.#glass = pw.addCompound({
@@ -758,10 +875,12 @@ export class TargetRig {
    */
   #deploySupports(): void {
     const pw = this.#ctx.physics;
-    for (const sx of [-SPAN_X, SPAN_X]) {
+    for (const [i, sx] of [-SPAN_X, SPAN_X].entries()) {
+      const id = (SUPPORT_ID_BASE + i) as EntityId;
+      const at = { x: sx, y: config.drop.plate.topYM + BLOCK_H / 2, z: 0 };
       const body = pw.addCompound({
         kind: 'fixed',
-        at: { x: sx, y: config.drop.plate.topYM + BLOCK_H / 2, z: 0 },
+        at,
         parts: [
           {
             // Laid with its LENGTH across the span, so the board gets a wide bearing.
@@ -772,11 +891,13 @@ export class TargetRig {
             material: 'concrete',
           },
         ],
+        entityId: id,
       });
       this.#bodies.push(body);
       const g = new THREE.Group();
       g.position.set(sx, config.drop.plate.topYM, 0);
       g.rotation.y = Math.PI / 2;
+      this.#supports.push({ id, body, kind: 'block', at, visual: g });
       this.#group.add(g);
       const gen = this.#gen;
       void loadCrushAssets()
@@ -789,6 +910,247 @@ export class TargetRig {
           /* the collider still holds the board up; a missing skin beats a broken deploy */
         });
     }
+  }
+
+  /** A 4 mm pane laid across the same two blocks (18 §6 C3). */
+  #deployPane(): void {
+    this.#deployed = true;
+    this.#gen++;
+    this.#deploySupports();
+    const pw = this.#ctx.physics;
+    const y = config.drop.plate.topYM + BLOCK_H + PANE_T / 2;
+    this.#glass = pw.addCompound({
+      kind: 'dynamic',
+      at: { x: 0, y, z: 0 },
+      parts: [
+        {
+          shape: { kind: 'box', halfExtents: { x: PANE_X / 2, y: PANE_T / 2, z: PANE_Z / 2 } },
+          material: 'glass',
+          massKg: TARGET_SPEC['glass-pane'].massKg,
+        },
+      ],
+      entityId: GLASS_ID,
+      ccd: true,
+    });
+    this.#bodies.push(this.#glass);
+    const group = new THREE.Group();
+    const geo = new THREE.BoxGeometry(PANE_X, PANE_T, PANE_Z);
+    this.#disposables.push(geo);
+    const mesh = new THREE.Mesh(geo, this.#paneMaterial());
+    mesh.castShadow = true;
+    group.add(mesh);
+    this.#group.add(group);
+    this.#glassVisual = group;
+    this.#props.add(this.#glass, group);
+  }
+
+  #paneMaterial(): THREE.MeshPhysicalMaterial {
+    // Frosted rather than clear, for the reason the goblet is: near-pure transmission
+    // renders invisible against the grey stage at env 0.18 (screenshot review, C1).
+    this.#paneMat ??= new THREE.MeshPhysicalMaterial({
+      color: 0xd6e8f0,
+      metalness: 0,
+      roughness: 0.1,
+      transmission: 0.5,
+      thickness: 0.004,
+      ior: 1.52,
+      transparent: true,
+      opacity: 0.72,
+      envMapIntensity: 2.2,
+      side: THREE.DoubleSide,
+    });
+    return this.#paneMat;
+  }
+
+  /**
+   * The pane is PUNCHED THROUGH (18 §6 C3). This is the first target that fails to
+   * stop the cube at all: annealed glass gives at a hard point, the cube carries on
+   * to the plate, and what is left behind is a spiderweb around a cube-sized hole.
+   *
+   * So the break is an ANNULUS, not a fan: the plug directly under the cube is gone
+   * — pulverised to the glitter cloud, which is both what happens to it and what
+   * keeps a shard from being born inside the descending cube (the egg's lesson).
+   * Around the hole, radial cracks run out to the edges of the sheet; the wedges over
+   * the gap fall through it and the ones still resting on a block stay perched until
+   * they topple. Nothing is thrown: gravity does all of it.
+   */
+  #shatterPane(t: Transform, inherited: Vec3, excessJ: number, hitAt: Vec3): void {
+    const pw = this.#ctx.physics;
+    const q = new THREE.Quaternion(t.q.x, t.q.y, t.q.z, t.q.w);
+    const local = new THREE.Vector3(hitAt.x - t.p.x, 0, hitAt.z - t.p.z).applyQuaternion(
+      q.clone().invert(),
+    );
+    const HX = PANE_X / 2;
+    const HZ = PANE_Z / 2;
+    const px = Math.max(-HX * 0.9, Math.min(HX * 0.9, local.x));
+    const pz = Math.max(-HZ * 0.9, Math.min(HZ * 0.9, local.z));
+    const over = Math.max(0, excessJ);
+
+    /** Deterministic per-seed hash — replay's no-dice law, with real irregularity. */
+    const hash = (a: number, b: number): number => {
+      const h = Math.sin(a * 127.1 + b * 311.7 + px * 74.7 + pz * 269.5) * 43758.5453;
+      return h - Math.floor(h);
+    };
+
+    /*
+     * VORONOI, seeded on the strike — not a polar grid.
+     *
+     * The first cut tessellated the sheet into even sectors and even rings, which is
+     * a DIAGRAM of a spiderweb rather than a spiderweb: perfectly symmetric, smoothly
+     * graded, and it read as "uniformly spreading out" (user, 2026-08-26 — and they
+     * were right). Real annealed glass branches and merges chaotically and comes
+     * apart into large irregular shards of wildly varying size; the tidy web in
+     * photographs is usually a FRAMED pane that cracked and stayed put, or laminated
+     * glass held by its interlayer. A 4 mm sheet on two blocks with a cube through it
+     * does not stay to display a pattern.
+     *
+     * Seeds cluster on the impact by a power law, so pieces come out small where the
+     * cube went through and large at the rim WITHOUT being graded into rings, and
+     * every cell is convex by construction — which is exactly what a hull collider
+     * wants.
+     */
+    const seedCount = Math.min(26, 9 + Math.round(Math.sqrt(over) * 0.9));
+    const seeds: THREE.Vector2[] = [];
+    for (let i = 0; i < seedCount; i++) {
+      const ang = hash(i, 1) * Math.PI * 2;
+      // r ~ u^1.9: dense at the strike, sparse at the edges, no ring structure.
+      const reach = Math.max(HX, HZ) * 1.15;
+      const r = Math.pow(hash(i, 2), 1.9) * reach;
+      seeds.push(
+        new THREE.Vector2(
+          Math.max(-HX * 0.995, Math.min(HX * 0.995, px + Math.cos(ang) * r)),
+          Math.max(-HZ * 0.995, Math.min(HZ * 0.995, pz + Math.sin(ang) * r)),
+        ),
+      );
+    }
+
+    /** Clip a convex polygon by the half-plane nearer to `a` than to `b`. */
+    const clip = (poly: THREE.Vector2[], a: THREE.Vector2, b: THREE.Vector2): THREE.Vector2[] => {
+      const nx = b.x - a.x;
+      const nz = b.y - a.y;
+      const mx = (a.x + b.x) / 2;
+      const mz = (a.y + b.y) / 2;
+      const side = (p: THREE.Vector2): number => (p.x - mx) * nx + (p.y - mz) * nz;
+      const out: THREE.Vector2[] = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p0 = poly[i]!;
+        const p1 = poly[(i + 1) % poly.length]!;
+        const s0 = side(p0);
+        const s1 = side(p1);
+        if (s0 <= 0) out.push(p0);
+        if ((s0 <= 0 && s1 > 0) || (s0 > 0 && s1 <= 0)) {
+          const tt = s0 / (s0 - s1);
+          out.push(new THREE.Vector2(p0.x + (p1.x - p0.x) * tt, p0.y + (p1.y - p0.y) * tt));
+        }
+      }
+      return out;
+    };
+
+    // Whatever punched through is gone: cells whose seed sits under the impactor are
+    // pulverised rather than spawned, which is both what happens to them and what
+    // keeps a shard from being born inside the descending cube.
+    let holeR = 0.045;
+    for (const e of this.#ctx.entities.all) {
+      const dx = e.curr.p.x - hitAt.x;
+      const dz = e.curr.p.z - hitAt.z;
+      if (Math.hypot(dx, dz) < e.spec.sideM) holeR = Math.max(holeR, e.spec.sideM * 0.6);
+    }
+
+    const pieces: { pts: THREE.Vector2[]; area: number; cx: number; cz: number }[] = [];
+    let areaSum = 0;
+    for (const [i, seed] of seeds.entries()) {
+      if (Math.hypot(seed.x - px, seed.y - pz) < holeR) continue;
+      let poly: THREE.Vector2[] = [
+        new THREE.Vector2(-HX, -HZ),
+        new THREE.Vector2(HX, -HZ),
+        new THREE.Vector2(HX, HZ),
+        new THREE.Vector2(-HX, HZ),
+      ];
+      for (const [j, other] of seeds.entries()) {
+        if (i === j) continue;
+        poly = clip(poly, seed, other);
+        if (poly.length < 3) break;
+      }
+      if (poly.length < 3) continue;
+      let area = 0;
+      let cx = 0;
+      let cz = 0;
+      for (let k = 0; k < poly.length; k++) {
+        const p0 = poly[k]!;
+        const p1 = poly[(k + 1) % poly.length]!;
+        area += p0.x * p1.y - p1.x * p0.y;
+        cx += p0.x;
+        cz += p0.y;
+      }
+      area = Math.abs(area) / 2;
+      if (area < 3e-5) continue;
+      pieces.push({ pts: poly, area, cx: cx / poly.length, cz: cz / poly.length });
+      areaSum += area;
+    }
+    if (areaSum <= 0) return;
+
+    for (const [i, piece] of pieces.entries()) {
+      const shape = new THREE.Shape(
+        piece.pts.map((p) => new THREE.Vector2(p.x - piece.cx, p.y - piece.cz)),
+      );
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: PANE_T, bevelEnabled: false });
+      geo.rotateX(Math.PI / 2);
+      geo.translate(0, PANE_T / 2, 0);
+      this.#disposables.push(geo);
+      const mesh = new THREE.Mesh(geo, this.#paneMaterial());
+      mesh.castShadow = true;
+      const wrap = new THREE.Group();
+      wrap.add(mesh);
+
+      const pos = geo.getAttribute('position');
+      const hull: number[] = [];
+      for (let k = 0; k < pos.count; k++) hull.push(pos.getX(k), pos.getY(k), pos.getZ(k));
+      const off = new THREE.Vector3(piece.cx, 0, piece.cz).applyQuaternion(q);
+      const body = pw.addCompound({
+        kind: 'dynamic',
+        at: { x: t.p.x + off.x, y: t.p.y + off.y, z: t.p.z + off.z },
+        parts: [
+          {
+            shape: { kind: 'convexHull', points: hull },
+            material: 'glass',
+            massKg: Math.max(0.002, (TARGET_SPEC['glass-pane'].massKg * piece.area) / areaSum),
+          },
+        ],
+        ccd: true,
+        linearDamping: 0.3,
+        angularDamping: 1,
+      });
+      /*
+       * Gravity does most of it. The push is small, RAGGED (hashed per piece) and
+       * biased outward rather than radially uniform — a sheet dropping out of its own
+       * plane, not a firework. Uniform radial ejection was the other half of what
+       * read as "weirdly perfect".
+       */
+      const r = Math.hypot(piece.cx - px, piece.cz - pz) || 1;
+      const base = Math.min(2.2, 0.05 + 0.1 * Math.sqrt(over));
+      const kick = base * (0.25 + hash(i, 7) * 1.5);
+      pw.setVelocity(
+        body,
+        {
+          x: inherited.x + ((piece.cx - px) / r) * kick,
+          y: inherited.y,
+          z: inherited.z + ((piece.cz - pz) / r) * kick,
+        },
+        {
+          x: (hash(i, 8) - 0.5) * 6,
+          y: (hash(i, 9) - 0.5) * 6,
+          z: (hash(i, 10) - 0.5) * 6,
+        },
+      );
+      this.#shards.push(body);
+      this.#group.add(wrap);
+      this.#props.add(body, wrap);
+    }
+    // The pulverised plug: the glass the cube actually went through.
+    this.#ctx.fx.particles(
+      { x: hitAt.x, y: config.drop.plate.topYM + BLOCK_H + PANE_T, z: hitAt.z },
+      glintSpec(Math.max(20, excessJ)),
+    );
   }
 
   /** The karate setup (18 §6 C3): a pine board bridging two blocks. */
@@ -894,7 +1256,15 @@ export class TargetRig {
        * the inner ends drop, the outer ends kick up, and the pieces land beside the
        * rig where you can see what you did.
        */
-      const out = Math.min(2.6, 0.9 + 0.16 * Math.sqrt(Math.max(0, excessJ)));
+      /*
+       * A hard enough hit THROWS the halves — they do not always settle beside the
+       * rig (user, 2026-08-26: "wouldn't the board and glass pane have the potential
+       * to fly off somewhere?"). The cap used to sit at 2.6 m/s purely as insurance
+       * against the melon audit's vanishing-debris bug; wreckage is RECOVERED at the
+       * world boundary now, so energy is free to matter again. Gentle breaks are
+       * unchanged — only the top end opens up.
+       */
+      const out = Math.min(4.5, 0.9 + 0.16 * Math.sqrt(Math.max(0, excessJ)));
       pw.setVelocity(
         body,
         { x: inherited.x + dir * out, y: inherited.y + 0.35 * out, z: inherited.z },
@@ -964,6 +1334,137 @@ export class TargetRig {
       .catch(() => {
         /* collider still works */
       });
+  }
+
+  /**
+   * A break costs the striker the target's threshold, and no more.
+   *
+   * A target resting on FIXED structure is a rigid sandwich for the step in which it
+   * is hit: the blocks stop the cube THROUGH the board, so by the time the swap runs
+   * a one-tonne cube has already been brought to rest by a 0.9 kg plank, and it then
+   * settles onto the blocks at 0.22 m/s (measured, 2026-08-26). Nothing downstream
+   * can be right after that — punch-through is fake, and structure never sees the
+   * hit it should.
+   *
+   * So at the swap the striker is given back the speed it should still have:
+   * v' = sqrt(v² − 2·E_break/m). Breaking a 50 J board costs a 28 kJ cube 0.2% of
+   * its speed, which is the honest answer, and it is what lets the same cube go on
+   * to demolish what the board was standing on.
+   */
+  #carryStrikerThrough(): void {
+    const striker = this.#pendingStriker;
+    this.#pendingStriker = null;
+    if (striker === null || this.#selected === 'none') return;
+    const e = this.#ctx.entities.get(striker.id);
+    if (!e) return;
+    const costJ = TARGET_SPEC[this.#selected].thresholdJ;
+    const after = Math.sqrt(
+      Math.max(0, striker.vHit * striker.vHit - (2 * costJ) / Math.max(0.001, striker.massKg)),
+    );
+    const v: Vec3 = { x: 0, y: 0, z: 0 };
+    this.#ctx.physics.readVelocityInto(e.body, v);
+    // Only the closing (downward) component is restored; sideways motion is its own.
+    this.#ctx.physics.setVelocity(e.body, { x: v.x, y: Math.min(v.y, -after), z: v.z });
+  }
+
+  /** Watch one impact for a hit on structure, and queue its collapse. */
+  #checkSupport(ev: ImpactEvent, massOf: (id: EntityId) => number | null): void {
+    if (this.#pendingSupport !== null) return;
+    for (const sup of this.#supports) {
+      let arrivalJ: number | null = null;
+      if (ev.b === sup.id && typeof ev.a === 'number') {
+        const m = massOf(ev.a);
+        if (m !== null) arrivalJ = 0.5 * m * ev.normalSpeedMps * ev.normalSpeedMps;
+      } else if (ev.a === sup.id && typeof ev.b === 'number') {
+        const m = massOf(ev.b);
+        if (m !== null) arrivalJ = 0.5 * m * ev.normalSpeedMps * ev.normalSpeedMps;
+      }
+      if (arrivalJ === null) continue;
+      const spec = SUPPORT_SPEC[sup.kind];
+      if (arrivalJ < spec.thresholdJ) continue;
+      this.#pendingSupport = { id: sup.id, excessJ: arrivalJ - spec.thresholdJ };
+      return;
+    }
+  }
+
+  /**
+   * Structure collapses (18 §6 C3). Concrete and stone do not fly: the block bursts
+   * where it stood and the pieces drop, so the kick is small and the damping high.
+   * Whatever was resting on it loses its support in the same step — a board left
+   * bridging one block falls, which is exactly what should happen.
+   */
+  #collapseSupport(): void {
+    const pending = this.#pendingSupport;
+    this.#pendingSupport = null;
+    if (pending === null) return;
+    const i = this.#supports.findIndex((s) => s.id === pending.id);
+    if (i < 0) return;
+    const sup = this.#supports[i]!;
+    this.#supports.splice(i, 1);
+    const pw = this.#ctx.physics;
+    const t = pw.transformOf(sup.body);
+    this.#removeBody(sup.body);
+    this.#bodies = this.#bodies.filter((b) => b !== sup.body);
+    this.#group.remove(sup.visual);
+    const spec = SUPPORT_SPEC[sup.kind];
+    const frags = this.#assetCache ? spec.frags(this.#assetCache) : [];
+    if (frags.length === 0) {
+      // No-asset fallback (load failure, headless): six lumps of rubble, so the
+      // physical outcome is the same even when the fractured mesh is unavailable.
+      const half = sup.kind === 'block' ? 0.07 : 0.05;
+      for (let i = 0; i < 6; i++) {
+        const az = (i / 6) * Math.PI * 2 + 0.3;
+        const body = pw.addCompound({
+          kind: 'dynamic',
+          at: {
+            x: t.p.x + Math.cos(az) * half,
+            y: t.p.y - BLOCK_H * 0.25 + (i % 2) * half,
+            z: t.p.z + Math.sin(az) * half,
+          },
+          parts: [
+            {
+              shape: { kind: 'box', halfExtents: { x: half, y: half, z: half } },
+              material: 'concrete',
+              massKg: spec.massKg / 6,
+            },
+          ],
+          ccd: true,
+          linearDamping: 1.4,
+          angularDamping: 2.5,
+        });
+        this.#shards.push(body);
+      }
+    }
+    if (frags.length > 0) {
+      this.#burstFragments(
+        frags,
+        spec.massKg,
+        t,
+        { x: 0, y: 0, z: 0 },
+        {
+          kickMps: Math.min(2.2, 0.3 + 0.09 * Math.sqrt(Math.max(0, pending.excessJ))),
+          loftFrac: 0.15,
+          spin: 2,
+          material: 'concrete',
+          linearDamping: 1.4,
+          angularDamping: 2.5,
+          pinnedR: null,
+          pulped: null,
+        },
+      );
+    }
+    this.#ctx.fx.play('crack_concrete', 1);
+    this.#ctx.fx.particles(
+      { x: t.p.x, y: t.p.y, z: t.p.z },
+      {
+        count: Math.min(60, 24 + Math.round(pending.excessJ * 0.02)),
+        lifeS: 1.1,
+        color: [0.62, 0.6, 0.56],
+        vMin: 0.4,
+        vMax: 2,
+        up: 0.75,
+      },
+    );
   }
 
   /**

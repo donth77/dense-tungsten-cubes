@@ -691,6 +691,129 @@ describe('C3.2 — the pine board (18 §6)', () => {
   }, 120_000);
 });
 
+/**
+ * C3.3 — the glass pane (18 §6 C3). The first target that fails to STOP the cube:
+ * annealed glass gives at a hard point, the cube punches through and carries on to
+ * the plate, and what is left is a spiderweb around a cube-sized hole.
+ */
+describe('C3.3 — the glass pane (18 §6)', () => {
+  it('the cube PUNCHES THROUGH and reaches the plate below', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('glass-pane');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    fullDrop(rig, 'W', 2, 1); // ~22 J against a 2 J pane: no contest
+    rig.run(2);
+    expect(rig.lab.state!.verdict).toBe('shattered');
+    // The pane sat on 20 cm blocks; the cube ends up BELOW that, on the plate.
+    const cube = [...rig.store.all][0]!;
+    expect(cube.curr.p.y, 'it did not stop on the glass').toBeLessThan(0.2032);
+    // A spiderweb, not two halves.
+    const shards = burstPieces(rig, before);
+    expect(shards.length).toBeGreaterThanOrEqual(6);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('the sheet drops out of its own plane rather than exploding', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('glass-pane');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    fullDrop(rig, 'W', 2, 1);
+    rig.run(2.5);
+    const shards = burstPieces(rig, before);
+    // Gravity does the work: everything stays within the sheet's own footprint plus
+    // the blocks it fell off, nothing is flung across the stage.
+    expect(Math.max(...shards.map((s) => s.r))).toBeLessThan(0.6);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+/**
+ * C3.4 — breakable STRUCTURE (18 §6 C3, user 2026-08-26). The blocks and the plinth
+ * break too, at the top of the ladder: a hollow CMU takes 250 J of arrival, marble
+ * 450, both far above the 50 J board — so it takes a monster cube to reach them.
+ */
+describe('C3.4 — the structure breaks too (18 §6)', () => {
+  it('a 2" cube leaves the blocks standing — they are the ceiling, not the target', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('pine-board');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    fullDrop(rig, 'W', 2, 2.5); // ~55 J: snaps the board, nowhere near the blocks
+    rig.run(1);
+    expect(rig.lab.state!.verdict).toBe('snapped');
+    // Exactly the two board halves: no block rubble, so both blocks stood.
+    expect(burstPieces(rig, before).length).toBe(2);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('a cube wider than the span lands ON the blocks and takes them out', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('pine-board');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    /*
+     * A 2" cube lands mid-span, snaps the board and falls THROUGH the 22 cm gap
+     * without ever touching a block — which is why the blocks survive it, and is
+     * honest: a board failing mid-span barely loads its supports. Reaching the
+     * blocks takes a cube wide enough to come down on them, and a 15" tungsten cube
+     * (0.38 m across, ~1 tonne) bridges the gap and lands on both at once.
+     */
+    rig.store.spawn('W', 15, { x: 0, y: rig.lab.platformY + 0.2, z: 0 });
+    rig.run(0.5);
+    rig.lab.setHeight(3);
+    rig.lab.hoist();
+    expect(rig.runUntil(() => rig.lab.towerPhase === 'armed', 12)).toBe(true);
+    rig.lab.dropNow();
+    rig.runUntil(() => rig.lab.state?.phase === 'done', 12);
+    rig.run(2);
+    // Board halves AND block rubble — far more than the two the board alone leaves.
+    expect(burstPieces(rig, before).length).toBeGreaterThan(4);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+describe('the two logged glitches, closed (2026-08-26)', () => {
+  it('a DROP press with cargo aboard is never eaten, whatever the phase', async () => {
+    const rig = await rigWithStage();
+    rig.store.spawn('W', 2, { x: 0, y: rig.lab.platformY + IN + 0.02, z: 0 });
+    rig.run(0.5);
+    rig.lab.setHeight(3);
+    rig.lab.hoist();
+    // Press it IMMEDIATELY — mid-climb, nowhere near armed. The old code enumerated
+    // the phases that may swallow a press and a third window still ate one; now the
+    // press latches and comes out the moment the winch is ready.
+    rig.lab.dropNow();
+    expect(rig.lab.towerPhase).not.toBe('armed');
+    expect(
+      rig.runUntil(() => rig.lab.state?.phase === 'done', 20),
+      'the drop happens',
+    ).toBe(true);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('deploying a target slides a resting cube clear instead of punting it off-stage', async () => {
+    const rig = await rigWithStage();
+    // A cube sitting exactly where the melon is about to be born.
+    const e = rig.store.spawn('W', 2, { x: 0, y: config.drop.plate.topYM + IN, z: 0 });
+    rig.run(0.4);
+    rig.lab.setTarget('watermelon');
+    rig.run(1.5);
+    const d = Math.hypot(e.curr.p.x, e.curr.p.z);
+    expect(d, 'it was moved out of the way').toBeGreaterThan(0.15);
+    expect(d, 'not flung across the stage').toBeLessThan(0.7);
+    expect(e.curr.p.y, 'and it is still on the plate').toBeGreaterThan(0);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
 describe('C2.2 — burst regimes (18 §6, audit)', () => {
   /** A 3×2×2 grid of hull chunks standing in for the melon's 12 Voronoi pieces. */
   function syntheticMelonAssets(): CrushAssets {
@@ -714,6 +837,8 @@ describe('C2.2 — burst regimes (18 §6, audit)', () => {
       can: new THREE.Group(),
       egg: new THREE.Group(),
       block: new THREE.Group(),
+      blockFrags: [],
+      plinthFrags: [],
       melonFrags: frags,
       glassFrags: [],
     };
