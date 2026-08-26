@@ -455,6 +455,105 @@ describe('C2 — the watermelon (18 §6)', () => {
 });
 
 /**
+ * C2.4 — the egg (18 §6, 02 §7): the only target that breaks WITHOUT an impact.
+ * 0.05 J is an 8 mm drop, so the honest lesson is the 45 N sustained-force trigger —
+ * gentle placement is the only survival, and "gentle" is a force, not an energy.
+ */
+describe('C1.6 — a knocked-off target breaks itself (user, 2026-08-25)', () => {
+  /** The deployed target body: the only many-part dynamic prop on the stage. */
+  function targetBody(rig: Rig) {
+    const b = [...rig.pw.allBodies()].find(
+      (h) => rig.pw.partsOf(h).length > 1 && rig.pw.bodyKindOf(h) === 'dynamic',
+    );
+    expect(b, 'the glass is deployed').toBeDefined();
+    return b!;
+  }
+
+  it('a glass swept off its plinth SHATTERS on the plate instead of bouncing intact', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('wine-glass');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    /*
+     * Sweep it off, the way a cube clipping the rim does. Nothing here breaks it by
+     * ARRIVAL energy — a 0.15 kg glass falling 23 cm carries 0.34 J against a 1 J
+     * threshold — so before `selfBreakMps` the goblet bounced on the plate and sat
+     * there whole (user-caught). Brittle failure is local stress: what breaks it is
+     * meeting steel at 1.9 m/s.
+     */
+    rig.pw.setVelocity(targetBody(rig), { x: 2.5, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    expect(
+      rig.runUntil(() => rig.lab.targetState.broken, 4),
+      'the fall breaks it',
+    ).toBe(true);
+    // `broken` flips at the impact; the swap itself is queued for the next
+    // beforePhysics (18 §5.2), so the shards exist a step later.
+    rig.run(0.3);
+    const shards = burstPieces(rig, before);
+    expect(shards.length, 'and it leaves shards').toBeGreaterThan(0);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('a nudge that only slides it does NOT break it — speed is the gauge', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('wine-glass');
+    rig.run(0.3);
+    // Gentle: it rocks and resettles on the plinth well under 1.3 m/s.
+    rig.pw.setVelocity(targetBody(rig), { x: 0.12, y: 0, z: 0 }, { x: 0, y: 0, z: 0 });
+    rig.run(1.5);
+    expect(rig.lab.targetState.broken).toBe(false);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+describe('C2.4 — the egg (18 §6)', () => {
+  it('a cube RESTED on it cracks it open — no impact anywhere in the story', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('egg');
+    rig.run(0.3);
+    expect(rig.lab.targetState.deployed).toBe(true);
+    // Placed, not dropped: 1 mm above the shell at zero velocity. A 2" tungsten cube
+    // is 2.36 kg = 23 N... under the 45 N limit, so this one must SURVIVE.
+    const eggTop = 0.02 + 0.057;
+    rig.store.spawn('W', 2, { x: 0, y: eggTop + IN + 0.001, z: 0 });
+    rig.run(2.5);
+    expect(rig.lab.targetState.broken, '23 N is a load the shell carries').toBe(false);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('past 45 N the shell gives way under a resting load, with no drop at all', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('egg');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    // 3" W is 7.96 kg = 78 N, comfortably past the 45 N quasi-static limit.
+    const eggTop = 0.02 + 0.057;
+    rig.store.spawn('W', 3, { x: 0, y: eggTop + 1.5 * IN + 0.001, z: 0 });
+    rig.run(2.5);
+    expect(rig.lab.targetState.broken, 'the shell gives under 78 N').toBe(true);
+    // …and it opens into shell pieces rather than vanishing.
+    const shell = burstPieces(rig, before);
+    expect(shell.length).toBeGreaterThan(0);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('and a DROP cracks it too — the verdict is CRACKED OPEN either way', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('egg');
+    rig.run(0.3);
+    fullDrop(rig, 'W', 1, 0.6);
+    rig.run(0.3);
+    expect(rig.lab.state!.verdict).toBe('cracked-open');
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+/**
  * C2.2 — burst REGIMES (realism audit 2026-08-25). The audit measured every burst
  * as the same uniform evacuation: bbox colliders inter-penetrated at spawn and the
  * solver's depenetration shove (~2+ m/s at ANY energy) drowned the authored kick.
@@ -544,6 +643,54 @@ describe('C2.3 — the soda can (18 §6)', () => {
   }, 120_000);
 });
 
+/**
+ * C3.2 — the pine board (18 §6 C3). The only target that fails by BENDING, and the
+ * mounting IS the mechanism: it bridges two cinder blocks, so the cube loads an
+ * unsupported middle and the board hinges apart at midspan.
+ */
+describe('C3.2 — the pine board (18 §6)', () => {
+  it('deploys as a board on TWO supports — the span is the mechanism', async () => {
+    const rig = await rigWithStage();
+    const base = rig.pw.bodyCount;
+    rig.lab.setTarget('pine-board');
+    rig.run(0.3);
+    // Two blocks + the board.
+    expect(rig.pw.bodyCount).toBe(base + 3);
+    rig.lab.setTarget('none');
+    rig.run(0.1);
+    expect(rig.pw.bodyCount).toBe(base);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+
+  it('creaks and holds below 50 J, then SNAPS into two halves', async () => {
+    const under = await rigWithStage();
+    under.lab.setTarget('pine-board');
+    under.run(0.3);
+    fullDrop(under, 'W', 2, 0.8); // ~18 J: the creak band
+    under.run(0.3);
+    expect(under.lab.state!.verdict).toBe('survived');
+    expect(under.lab.targetState.broken).toBe(false);
+    under.lab.teardown();
+    under.pw.free();
+
+    const over = await rigWithStage();
+    over.lab.setTarget('pine-board');
+    over.run(0.3);
+    const before = new Set(over.pw.allBodies());
+    fullDrop(over, 'W', 2, 2.5); // ~55 J
+    over.run(1.5);
+    expect(over.lab.state!.verdict).toBe('snapped');
+    // TWO halves, not a fragment cloud — that is what bending failure looks like.
+    const pieces = burstPieces(over, before);
+    expect(pieces.length).toBe(2);
+    // They hinge down into the gap rather than flying: still over their own blocks.
+    expect(Math.max(...pieces.map((p) => p.r))).toBeLessThan(0.45);
+    over.lab.teardown();
+    over.pw.free();
+  }, 120_000);
+});
+
 describe('C2.2 — burst regimes (18 §6, audit)', () => {
   /** A 3×2×2 grid of hull chunks standing in for the melon's 12 Voronoi pieces. */
   function syntheticMelonAssets(): CrushAssets {
@@ -565,6 +712,8 @@ describe('C2.2 — burst regimes (18 §6, audit)', () => {
       pedestal: new THREE.Group(),
       melonFull: new THREE.Group(),
       can: new THREE.Group(),
+      egg: new THREE.Group(),
+      block: new THREE.Group(),
       melonFrags: frags,
       glassFrags: [],
     };

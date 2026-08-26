@@ -30,6 +30,8 @@ export const VERDICT_LABEL: Readonly<Record<DropVerdict, string>> = {
   shattered: 'SHATTERED',
   splat: 'SPLAT',
   'crushed-flat': 'CRUSHED FLAT',
+  'cracked-open': 'CRACKED OPEN',
+  snapped: 'SNAPPED',
   survived: 'SURVIVED',
 };
 

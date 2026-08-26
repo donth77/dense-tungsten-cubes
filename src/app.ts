@@ -146,6 +146,8 @@ export class App implements Stepper {
       }),
     );
 
+    this.#armAudioUnlock();
+
     this.puffs = new ImpactPuffs(this.render.scene);
     this.decals = new DecalSystem(this.render.scene);
     this.impactFx = new ImpactFx(
@@ -174,7 +176,7 @@ export class App implements Stepper {
         decals: {
           setTarget: (mesh, floor) => this.decals.setTarget(mesh as never, floor),
           setSplatTarget: (mesh) => this.decals.setSplatTarget(mesh as never),
-          splat: (at, rM) => this.decals.splat(at, rM),
+          splat: (at, rM, tint) => this.decals.splat(at, rM, tint),
           clear: () => this.decals.clear(),
         },
       },
@@ -667,6 +669,32 @@ export class App implements Stepper {
   #fastFrames = 0;
 
   // ---- viewport -------------------------------------------------------------------
+
+  /**
+   * Unlock audio on the first user gesture ANYWHERE on the page.
+   *
+   * The router's `onFirstGesture` is bound to the CANVAS, so it only fires when the
+   * player touches the 3D stage — and the whole Drop Tower flow is panel buttons
+   * (pick a target, HOIST, DROP). A player who never clicked the stage got a silent
+   * app and no way to know why: every impact hit `#onImpact`'s null-context guard and
+   * vanished ("why doesn't audio work until I manually spawn a cube with left click",
+   * user 2026-08-26 — and the likely root of the earlier "randomly on and off"
+   * reports, which depended on whether the stage had been clicked that session).
+   *
+   * Capture phase and one-shot: a browser only needs one gesture to allow audio, and
+   * this must not care which element it landed on.
+   */
+  #armAudioUnlock(): void {
+    const kinds = ['pointerdown', 'keydown', 'touchstart'] as const;
+    const fire = (): void => {
+      for (const k of kinds) document.removeEventListener(k, fire, true);
+      void this.audio.unlock();
+    };
+    for (const k of kinds) document.addEventListener(k, fire, true);
+    this.#teardown.push(() => {
+      for (const k of kinds) document.removeEventListener(k, fire, true);
+    });
+  }
 
   /** Everything that must be undone by `dispose()`, in the order it was set up. */
   readonly #teardown: (() => void)[] = [];

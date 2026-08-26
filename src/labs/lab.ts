@@ -72,7 +72,7 @@ export interface LabContext {
     decals: {
       setTarget(mesh: unknown, floor: 'concrete' | 'oak' | 'sand' | null): void;
       setSplatTarget(mesh: unknown): void;
-      splat(at: Vec3, rM: number): void;
+      splat(at: Vec3, rM: number, tint?: number): void;
       clear(): void;
     };
   };

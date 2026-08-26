@@ -209,3 +209,9 @@ function fractureGlb(srcPath, meshNameRe, fragmentCount, outPath) {
 
 fractureGlb('public/watermelon.glb', /Watermelon_Full/, 12, 'public/melon-frags.glb');
 fractureGlb('public/wine-glass.glb', /Object_4|Object_0/, 10, 'public/glass-frags.glb');
+/*
+ * NOT the egg. Voronoi-fracturing an egg as a SOLID gives chunky wedges, and an egg
+ * is a 0.35 mm brittle SHELL around a liquid — it caves in and its curved plates
+ * stay put in the puddle (user review, 2026-08-25). The shell is authored as thin
+ * curved caps in targets.ts instead.
+ */

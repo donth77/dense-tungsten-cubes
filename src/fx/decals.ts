@@ -96,12 +96,18 @@ function splatCanvas(): HTMLCanvasElement {
   cv.width = cv.height = 128;
   const c = cv.getContext('2d');
   if (!c) return cv;
-  // Juice: an irregular dark-red blot with satellite droplets.
+  /*
+   * An irregular blot with satellite droplets, painted NEUTRAL: the colour arrives
+   * as the material's tint, so one canvas serves melon juice and egg yolk. It used
+   * to be painted dark red, which meant tinting it yellow could only ever produce
+   * a darker red — the first yolk splat came out the colour of blood (screenshot
+   * review, 2026-08-25).
+   */
   const cx = 64;
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
     const r = 24 + 18 * Math.abs(Math.sin(i * 2.3));
-    c.fillStyle = 'rgba(140, 28, 32, 0.55)';
+    c.fillStyle = 'rgba(255, 255, 255, 0.55)';
     c.beginPath();
     c.arc(cx + Math.cos(a) * r * 0.45, cx + Math.sin(a) * r * 0.45, r * 0.6, 0, Math.PI * 2);
     c.fill();
@@ -109,12 +115,12 @@ function splatCanvas(): HTMLCanvasElement {
   for (let i = 0; i < 14; i++) {
     const a = i * 2.4;
     const d = 38 + (i % 5) * 5;
-    c.fillStyle = 'rgba(150, 32, 36, 0.5)';
+    c.fillStyle = 'rgba(255, 255, 255, 0.5)';
     c.beginPath();
     c.arc(cx + Math.cos(a) * d, cx + Math.sin(a) * d, 3 + (i % 3) * 2, 0, Math.PI * 2);
     c.fill();
   }
-  c.fillStyle = 'rgba(120, 20, 24, 0.7)';
+  c.fillStyle = 'rgba(255, 255, 255, 0.72)';
   c.beginPath();
   c.arc(cx, cx, 20, 0, Math.PI * 2);
   c.fill();
@@ -126,6 +132,8 @@ export class DecalSystem {
   #target: THREE.Mesh | null = null;
   #splatTarget: THREE.Mesh | null = null;
   #splatMat: THREE.MeshStandardMaterial | null = null;
+  #splatTex: THREE.CanvasTexture | null = null;
+  readonly #splatMats = new Map<number, THREE.MeshStandardMaterial>();
   #floor: DecalFloor | null = null;
   readonly #marks: THREE.Mesh[] = [];
   readonly #mats = new Map<DecalKind, THREE.MeshStandardMaterial>();
@@ -163,13 +171,25 @@ export class DecalSystem {
     this.#splatTarget = mesh;
   }
 
-  splat(at: { x: number; y: number; z: number }, rM: number): void {
+  splat(at: { x: number; y: number; z: number }, rM: number, tint?: number): void {
     if (!this.#splatTarget) return;
-    this.#splatMat ??= (() => {
-      const tx = new THREE.CanvasTexture(splatCanvas());
-      tx.colorSpace = THREE.SRGBColorSpace;
-      const m = new THREE.MeshStandardMaterial({
-        map: tx,
+    /*
+     * One material per TINT, cached: the blot texture is shared and coloured through
+     * `color`, so yolk and melon juice cost one canvas between them.
+     */
+    // Default = melon juice: the tint is the colour, and an untinted blot would be
+    // a white smear on the plate.
+    const key = tint ?? 0x8c1c20;
+    let mat = this.#splatMats.get(key);
+    if (!mat) {
+      this.#splatTex ??= (() => {
+        const tx = new THREE.CanvasTexture(splatCanvas());
+        tx.colorSpace = THREE.SRGBColorSpace;
+        return tx;
+      })();
+      mat = new THREE.MeshStandardMaterial({
+        map: this.#splatTex,
+        color: key,
         transparent: true,
         depthWrite: false,
         polygonOffset: true,
@@ -177,8 +197,9 @@ export class DecalSystem {
         roughness: 0.35,
         metalness: 0,
       });
-      return m;
-    })();
+      this.#splatMats.set(key, mat);
+    }
+    this.#splatMat = mat;
     this.#seq += 1;
     const spin = (this.#seq * 2.399963) % (Math.PI * 2);
     const geo = new DecalGeometry(
@@ -251,8 +272,10 @@ export class DecalSystem {
 
   dispose(): void {
     this.clear();
-    this.#splatMat?.map?.dispose();
-    this.#splatMat?.dispose();
+    this.#splatTex?.dispose();
+    for (const m of this.#splatMats.values()) m.dispose();
+    this.#splatMats.clear();
+    this.#splatMat = null;
     for (const m of this.#mats.values()) {
       m.map?.dispose();
       m.dispose();

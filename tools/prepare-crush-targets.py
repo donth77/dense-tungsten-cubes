@@ -146,3 +146,29 @@ scene['nodes'] = [len(js['nodes']) - 1]
 write_glb('public/soda-can.glb', js, bytes(binbuf))
 print('soda-can.glb: morph targets [dent, flat] baked, scale %.5f -> H 0.122 m, Ø %.3f m'
       % (S, 2 * 0.6902 * S))
+
+
+# Egg (18 §6 C2): the sustained-force target. The mesh composes to 0.32 x 0.42 x 0.32
+# with its base already at y=0, so ONE wrap scale makes a real large hen's egg —
+# 5.7 cm tall, 4.4 cm across, the size 02 §7's 45 N and 0.05 J anchors describe.
+js, binbuf = read_glb('assets-lib/egg/egg.glb')
+S = 0.057 / 0.41917
+scene = js['scenes'][js.get('scene', 0)]
+js['nodes'].append({'name': 'egg_root', 'children': scene['nodes'], 'scale': [S, S, S]})
+scene['nodes'] = [len(js['nodes']) - 1]
+write_glb('public/egg.glb', js, binbuf)
+print('egg.glb wrapped: scale %.4f -> H %.3f m, W %.3f m' % (S, 0.41917 * S, 0.31995 * S))
+
+
+# Cinder block (18 §6 C3): the support both spanning targets rest on. Measured world
+# size 0.4403 x 0.2032 x 0.2032 — the 8 x 8 inch cross-section is EXACT, so this is a
+# real block that happens to run 17.3 inches long rather than a nominal 16. NOT scaled:
+# rescaling to nominal length would shrink the cross-section to 7.4 inches and make a
+# correct model wrong. Only re-origined so its base sits at y = 0.
+js, binbuf = read_glb('assets-lib/cinder-block/cinder_block.glb')
+scene = js['scenes'][js.get('scene', 0)]
+js['nodes'].append({'name': 'block_root', 'children': scene['nodes'],
+                    'translation': [0, 0.1016, 0]})
+scene['nodes'] = [len(js['nodes']) - 1]
+write_glb('public/cinder-block.glb', js, binbuf)
+print('cinder-block.glb: verbatim scale, base at y=0 (0.440 x 0.203 x 0.203)')

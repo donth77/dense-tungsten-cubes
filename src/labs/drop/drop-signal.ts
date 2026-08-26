@@ -28,6 +28,8 @@ export type DropVerdict =
   | 'shattered'
   | 'splat'
   | 'crushed-flat'
+  | 'cracked-open'
+  | 'snapped'
   | 'survived';
 
 export interface DropSample {

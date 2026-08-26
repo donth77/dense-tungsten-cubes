@@ -9,7 +9,16 @@
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
 export type SurfaceId =
-  'concrete' | 'steel' | 'oak' | 'rubber' | 'foam' | 'ice' | 'sand' | 'trampoline' | 'pulp';
+  | 'concrete'
+  | 'steel'
+  | 'oak'
+  | 'rubber'
+  | 'foam'
+  | 'ice'
+  | 'sand'
+  | 'trampoline'
+  | 'pulp'
+  | 'glass';
 
 /**
  * What a rigid body IS to the solver. Most bodies are born and die in one kind; the

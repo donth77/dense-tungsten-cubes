@@ -67,6 +67,8 @@ let crush: Promise<{
   pedestal: THREE.Object3D;
   melon: THREE.Object3D;
   can: THREE.Object3D;
+  egg: THREE.Object3D;
+  block: THREE.Object3D;
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }> | null = null;
@@ -259,6 +261,10 @@ export interface CrushAssets {
    * influence array, so states never leak between mounts.
    */
   can: THREE.Object3D;
+  /** The intact shell; its break pieces are authored as thin caps, not fractured. */
+  egg: THREE.Object3D;
+  /** A real cinder block, base-origined — the support pair under spanning targets. */
+  block: THREE.Object3D;
   melonFrags: FragChunk[];
   glassFrags: FragChunk[];
 }
@@ -282,6 +288,8 @@ export function loadCrushAssets(): Promise<CrushAssets> {
       pedestal: a.pedestal.clone(),
       melonFull: a.melonFull.clone(),
       can: a.can.clone(),
+      egg: a.egg.clone(),
+      block: a.block.clone(),
       melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
       glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     });
@@ -291,9 +299,11 @@ export function loadCrushAssets(): Promise<CrushAssets> {
     loadScene('pedestal.glb'),
     loadScene('watermelon.glb'),
     loadScene('soda-can.glb'),
+    loadScene('egg.glb'),
+    loadScene('cinder-block.glb'),
     loadScene('melon-frags.glb'),
     loadScene('glass-frags.glb'),
-  ]).then(([glass, pedestal, melon, can, melonFragScene, glassFragScene]) => {
+  ]).then(([glass, pedestal, melon, can, egg, block, melonFragScene, glassFragScene]) => {
     const glassSkin = skinOf(glass);
     const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
     return {
@@ -301,6 +311,8 @@ export function loadCrushAssets(): Promise<CrushAssets> {
       pedestal,
       melon,
       can,
+      egg,
+      block,
       melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
         makeFleshMaterial(node.position.clone()),
       ),
@@ -312,6 +324,8 @@ export function loadCrushAssets(): Promise<CrushAssets> {
     pedestal: a.pedestal.clone(),
     melonFull: melonPart(a.melon, /Full/),
     can: a.can.clone(),
+    egg: a.egg.clone(),
+    block: a.block.clone(),
     melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
     glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
   }));

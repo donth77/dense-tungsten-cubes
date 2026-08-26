@@ -35,7 +35,10 @@ export type VoiceId =
   | 'clack_hook'
   | 'tinkle_glass'
   | 'splat_melon'
-  | 'crunch_can';
+  | 'crunch_can'
+  | 'crack_egg'
+  | 'snap_wood'
+  | 'creak_wood';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -268,6 +271,55 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
   /* Thin aluminium giving way (18 §6 C2): a Poisson crackle of micro-buckling
    * clicks over a modest metallic body — the Farnell crumple model, not a noise
    * burst. The dent plays the same voice quieter; the flatten gets full gain. */
+  /* A shell giving way (18 §6 C2): one dry snap of brittle calcite, then the wet
+   * slop of what was inside. Short — an egg is over before you register it. */
+  /* A shell caving in: a short dry tick of calcite giving way and then the wet
+   * slump of what was inside. Duller and wetter than a tinkle — an egg crushed
+   * under weight sounds nothing like glass (review, 2026-08-25). */
+  crack_egg: {
+    freq: 900,
+    partials: [1, 1.74, 2.41],
+    decayS: 0.05,
+    noise: 0.85,
+    noiseHz: 1500,
+    noiseDecayS: 0.11,
+    noiseQ: 0.8,
+    thump: 0.35,
+    thumpHz: 120,
+    crackle: 4,
+    crackleSpanS: 0.06,
+  },
+  /* A pine board letting go across the grain: a hard low CRACK, the fibres tearing
+   * as a fast crackle behind it, and no ring at all. This is the loudest thing in
+   * the target set and it should read that way. */
+  snap_wood: {
+    freq: 320,
+    partials: [1, 1.58, 2.24, 3.1],
+    decayS: 0.19,
+    noise: 0.7,
+    noiseHz: 1400,
+    noiseDecayS: 0.13,
+    noiseQ: 0.9,
+    thump: 0.55,
+    thumpHz: 95,
+    crackle: 14,
+    crackleSpanS: 0.1,
+  },
+  /* Sub-threshold: the board takes the hit and complains — a short groan of fibre
+   * without the break (18 §5.2's "the board creaks"). */
+  creak_wood: {
+    freq: 260,
+    partials: [1, 1.33, 1.91],
+    decayS: 0.22,
+    noise: 0.4,
+    noiseHz: 700,
+    noiseDecayS: 0.18,
+    noiseQ: 2.2,
+    thump: 0.3,
+    thumpHz: 90,
+    crackle: 3,
+    crackleSpanS: 0.14,
+  },
   crunch_can: {
     freq: 480,
     partials: [1, 1.62, 2.41, 3.55],

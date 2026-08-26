@@ -670,6 +670,35 @@ export class PhysicsWorld {
     return this.#reportedToTrue(impulse) / this.#world.timestep;
   }
 
+  /**
+   * The LARGEST single contact push on a body along an axis, in newtons.
+   *
+   * `contactForceAlongN` sums every manifold, which is what a balance pan wants (its
+   * contacts are all on one side) and exactly wrong for something being SQUEEZED: an
+   * egg between a cube and the plate reports the load twice, once as the press and
+   * once as the support, and reads ~2x the force it actually feels (measured while
+   * pinning the 45 N trigger, 2026-08-25). The biggest single push is the squeeze.
+   */
+  maxContactForceAlongN(h: BodyHandle, axis: Vec3): number {
+    const rec = this.#recs.get(h);
+    if (!rec) return 0;
+    let peak = 0;
+    for (const c of rec.colliders) {
+      this.#world.contactPairsWith(c, (other) => {
+        this.#world.contactPair(c, other, (manifold) => {
+          const n = manifold.normal();
+          const along = Math.abs(n.x * axis.x + n.y * axis.y + n.z * axis.z);
+          let impulse = 0;
+          for (let i = 0; i < manifold.numContacts(); i++) {
+            impulse += manifold.contactImpulse(i) * along;
+          }
+          peak = Math.max(peak, impulse);
+        });
+      });
+    }
+    return this.#reportedToTrue(peak) / this.#world.timestep;
+  }
+
   /** Whether a handle still names a live body — the safe check teardown needs. */
   hasBody(h: BodyHandle): boolean {
     return this.#recs.has(h);

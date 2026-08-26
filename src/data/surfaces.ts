@@ -127,6 +127,22 @@ export const SURFACES: Readonly<Record<SurfaceId, SurfaceSpec>> = {
     metalness: 0,
   },
   /*
+   * Glassware, and the shards it leaves. It stood in as 'ice' through C1 because
+   * both are hard, cold and quiet — but ice is friction 0.04, so a nudged wine glass
+   * SKATED off the plate like a curling stone (user-caught, 2026-08-25). Glass on
+   * steel is a normal dry contact; what makes it glass is that it barely bounces.
+   */
+  glass: {
+    id: 'glass',
+    label: 'Glass',
+    friction: 0.4,
+    restitution: 0.25,
+    voice: 'tinkle_glass',
+    baseColorLinear: [0.62, 0.7, 0.74],
+    roughness: 0.15,
+    metalness: 0,
+  },
+  /*
    * Wet fracture flesh (18 §6 C2 realism audit): a burst watermelon's pieces. Wet
    * pulp is dead on landing — the audit measured oak-pair pieces skipping clean off
    * the plate — so restitution is the floor of the table, and it lands with the wet

@@ -242,3 +242,53 @@ export function stencilPlate(line1: string, line2: string): RigMaps | null {
   c.fillText(line2, 256, 196);
   return { map: tex(c) };
 }
+
+/**
+ * T5 — pine board: pale sapwood with straight grain lines and a couple of knots.
+ * The grain runs along U, so a board stretched on its long axis reads correctly —
+ * and the grain direction is not decoration here: it is WHY the board snaps across
+ * the span rather than splitting along it (18 §6 C3).
+ */
+export function pineBoard(): RigMaps | null {
+  const c = canvas(512, 256);
+  const r = canvas(512, 256);
+  if (!c || !r) return null;
+  const rnd = mulberry32(0x5eed);
+  c.fillStyle = '#c9a877';
+  c.fillRect(0, 0, 512, 256);
+  // Grain: long, slightly wandering lines at varying darkness.
+  for (let i = 0; i < 90; i++) {
+    const y = rnd() * 256;
+    const dark = rnd() < 0.25;
+    c.strokeStyle = dark ? 'rgba(96, 66, 38, 0.55)' : 'rgba(160, 122, 76, 0.4)';
+    c.lineWidth = dark ? 1.6 + rnd() * 1.6 : 0.8 + rnd();
+    c.beginPath();
+    c.moveTo(0, y);
+    for (let x = 0; x <= 512; x += 32) c.lineTo(x, y + Math.sin(x * 0.02 + i) * (1 + rnd() * 2));
+    c.stroke();
+  }
+  // Knots: dark ellipses with a ring around them, where the grain parts.
+  for (let k = 0; k < 2; k++) {
+    const kx = 90 + rnd() * 330;
+    const ky = 40 + rnd() * 176;
+    for (let ring = 4; ring >= 1; ring--) {
+      c.strokeStyle = `rgba(84, 54, 30, ${0.18 * ring})`;
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.ellipse(kx, ky, ring * 5, ring * 3.2, 0, 0, Math.PI * 2);
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(70, 44, 24, 0.85)';
+    c.beginPath();
+    c.ellipse(kx, ky, 5, 3.2, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+  noise(c, rnd, [{ n: 700, size: 3, alpha: 0.05, light: '#d8bd93', dark: '#9d7c4e' }]);
+  // Sawn timber is uniformly matte; the knots are the only slick spots.
+  r.fillStyle = '#c8c8c8';
+  r.fillRect(0, 0, 512, 256);
+  noise(r, mulberry32(0x5eee), [
+    { n: 400, size: 4, alpha: 0.12, light: '#dedede', dark: '#b0b0b0' },
+  ]);
+  return { map: tex(c), roughnessMap: tex(r) };
+}

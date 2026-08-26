@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { TARGET_IDS, TARGET_SPEC } from '../../src/labs/drop/targets.ts';
+import type { TargetId } from '../../src/labs/drop/targets.ts';
 import { config } from '../../src/config.ts';
 import { DropSignal } from '../../src/labs/drop/drop-signal.ts';
 import type { DropSample } from '../../src/labs/drop/drop-signal.ts';
@@ -118,6 +120,19 @@ describe('the drop signal (16 §12.2) — three beats, nothing revised', () => {
   it('partner verdicts outrank everything', () => {
     expect(runDrop('steel', ev({ point: { x: 0.9, y: 0, z: 0 }, energyJ: 900 })).verdict).toBe(
       'off-the-plate',
+    );
+  });
+});
+
+describe('the TARGET row is the energy ladder (18 §6, user 2026-08-26)', () => {
+  it('lists targets in increasing order of the energy needed to break them', () => {
+    expect(TARGET_IDS[0], 'None comes first — it is the absence of a target').toBe('none');
+    const breakable = TARGET_IDS.slice(1) as Exclude<TargetId, 'none'>[];
+    const thresholds = breakable.map((id) => TARGET_SPEC[id].thresholdJ);
+    expect(thresholds).toEqual([...thresholds].sort((a, b) => a - b));
+    // Every breakable target appears exactly once.
+    expect(breakable.slice().sort()).toEqual(
+      (Object.keys(TARGET_SPEC) as Exclude<TargetId, 'none'>[]).sort(),
     );
   });
 });
