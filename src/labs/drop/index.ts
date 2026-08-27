@@ -676,12 +676,29 @@ export class DropLab implements Lab {
         onChange: (id) => this.setFloor(id as FloorId),
       },
       {
-        kind: 'toggle',
+        /*
+         * A SEGMENTED pair, not a switch (user, 2026-08-26: "the label updates which
+         * is confusing UX"). The switch swapped its own label between "AIR — drag on"
+         * and "VACUUM — Galileo mode", so it was impossible to tell whether the text
+         * described the current state or the thing a press would do — and the
+         * accessibility semantics were inverted outright: with vacuum ON, a screen
+         * reader read "VACUUM — Galileo mode, switch, NOT CHECKED", which says the
+         * opposite of the truth. A switch's name must name what it CONTROLS; its
+         * state belongs to aria-checked.
+         *
+         * Two named options fix both: the label never moves, both states are always
+         * visible, and it matches the FLOOR and TARGET rows next to it.
+         */
+        kind: 'segmented',
         id: 'air',
-        label: this.air ? 'AIR — drag on' : 'VACUUM — Galileo mode',
-        value: this.air,
-        onChange: (on) => {
-          this.air = on;
+        label: 'ATMOSPHERE',
+        value: this.air ? 'air' : 'vacuum',
+        options: [
+          { id: 'air', label: 'Air' },
+          { id: 'vacuum', label: 'Vacuum' },
+        ],
+        onChange: (id) => {
+          this.air = id === 'air';
           this.#publish();
         },
       },

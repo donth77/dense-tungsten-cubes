@@ -28,7 +28,8 @@ test.describe('the Drop Tower', () => {
     // The controls the lab promised (16 §13.1): height, floor, air, the primary verb.
     await expect(page.locator('input[aria-label="HEIGHT"]')).toBeVisible();
     await expect(page.getByRole('radiogroup', { name: 'FLOOR' })).toBeVisible();
-    await expect(page.getByRole('switch')).toBeVisible();
+    // ATMOSPHERE is a named pair, not a switch whose label moves (2026-08-26).
+    await expect(page.getByRole('radiogroup', { name: 'ATMOSPHERE' })).toBeVisible();
     const hoist = page.getByRole('button', { name: 'HOIST' });
     await expect(hoist).toBeVisible();
     // No cube on the plate yet — the verb is offered but honest about it.
