@@ -43,6 +43,15 @@ import type { EntityId, ImpactEvent, Vec3, SurfaceId } from '../../types.ts';
 const D = config.drop;
 const DT = config.loop.DT;
 
+/**
+ * How long before a bottoming-out landing the mat is allowed to give way, in seconds.
+ * Measured in TIME so the margin is a fixed number of solver steps at any impact speed;
+ * at the default 60 Hz step this is about 11 of them, which is ample for the pad to be
+ * static well before the cube's swept test reaches it, while still reading as the mat
+ * collapsing under the cube rather than in anticipation of it.
+ */
+const CRUSH_ARM_S = 0.18;
+
 export class DropLab implements Lab {
   readonly id = 'drop' as const;
   readonly title = 'Drop Tower';
@@ -95,6 +104,9 @@ export class DropLab implements Lab {
     this.#tower = new Tower(ctx, () => this.#floors.topYM);
     this.#tower.build();
     this.#targets = new TargetRig(ctx);
+    // Pay the burst materials' compile cost now, on a stage where nothing is moving,
+    // rather than in the frame the cube lands (see TargetRig.warmBurstShaders).
+    this.#targets.warmBurstShaders();
     this.#applyFraming();
     this.#publish();
   }
@@ -169,7 +181,10 @@ export class DropLab implements Lab {
       // together, and the mat answers to everything it catches at once.
       const vVac = Math.sqrt(2 * config.physics.gravityMps2 * hM);
       crushTravelM = pad.wouldBottomOut(totalKg, vVac) ? pad.params.travelM : 0;
-      pad.setRegime(crushTravelM > 0 ? 'crushed' : 'live');
+      // The PREDICTION is needed here and now — DropSignal measures the fall to the
+      // surface the cube will actually meet. Applying it is beforePhysics's job, once
+      // the cube is nearly down; setting the regime here collapsed the mat at release.
+      if (crushTravelM === 0) pad.setRegime('live');
     }
     const ids = this.#tower.drop();
     if (ids.length === 0) return;
@@ -315,6 +330,7 @@ export class DropLab implements Lab {
       const padTop = pad.padTopRestY;
       let arrivalJ = 0;
       let occupied = false;
+      let soonestArrivalS = Infinity;
 
       for (const e of this.#ctx.entities.all) {
         const p = e.curr.p;
@@ -345,14 +361,33 @@ export class DropLab implements Lab {
             0.5 * e.massKg * e.lastVel.y * e.lastVel.y +
             e.massKg * config.physics.gravityMps2 * dropM;
         }
+        // Time to the fabric, not distance to it: the arming window has to mean the
+        // same number of solver steps whether the cube is doing 3 m/s or 12.
+        const vDownMps = -e.lastVel.y;
+        if (dropM > 0 && vDownMps > 0.05) {
+          soonestArrivalS = Math.min(soonestArrivalS, dropM / vDownMps);
+        }
       }
-      if (arrivalJ > pad.params.bottomOutJ) {
+      /*
+       * Decide early, collapse late.
+       *
+       * The verdict is the same the moment anything is falling — the gate charges each
+       * cube its REMAINING fall, so arrivalJ clears the threshold at release, from any
+       * height. Acting on it there is what made the mat give way seconds before the
+       * cube arrived (user, 2026-08-27); the comment here used to claim it fired "a
+       * frame ahead of the landing", which the arithmetic never did.
+       *
+       * So gate the physical collapse on arrival being IMMINENT. CRUSH_ARM_S is far
+       * enough ahead that the pad is long settled before the cube's swept test reaches
+       * it — the failure that made this eager in the first place was a slam teleport
+       * close to contact eating the landing (0.87 m/s recorded for a 9.5 m/s strike,
+       * 16 §7.3) — and short enough to read as the mat giving way under the load.
+       */
+      if (arrivalJ > pad.params.bottomOutJ && soonestArrivalS <= CRUSH_ARM_S) {
         pad.setRegime('crushed');
       } else if (!occupied) {
         pad.setRegime('live'); // no-op unless it was crushed
       }
-      // The crush theatre fires as the cube arrives - the mat slams through its
-      // stroke a frame ahead of the landing, never in anticipation from afar.
     }
     if (this.air) {
       // The air column applies to EVERY dynamic cube in the lab — a thrown cube slows

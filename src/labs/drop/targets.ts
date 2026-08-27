@@ -347,6 +347,42 @@ export class TargetRig {
     if (!this.#deployed) this.deploy();
   }
 
+  /**
+   * Compile the burst materials NOW, while nothing is falling.
+   *
+   * The first melon drop of a session froze for 727 ms (measured, 2026-08-27): the
+   * fragment and juice materials had never been drawn, so the driver compiled four
+   * shader programs at the moment of impact. Physics keeps stepping through a stalled
+   * frame, so the cube was already buried in the melon when drawing resumed — read as
+   * the cube clipping through before the burst appeared (user).
+   *
+   * compileAsync warms the programs off the hot path. It does not upload the fragment
+   * geometry — that still lands at burst — but the programs were the expensive half.
+   * Failure here is free: a cold burst is exactly today's behaviour.
+   */
+  warmBurstShaders(): void {
+    void loadCrushAssets()
+      .then(async (a) => {
+        const warm = new THREE.Group();
+        for (const set of [a.melonFrags, a.glassFrags, a.blockFrags, a.plinthFrags]) {
+          for (const f of set) warm.add(f.visual.clone());
+        }
+        // Off the floor and unrendered: compileAsync needs the object parented into a
+        // scene for lights and environment to resolve, not shown to anyone.
+        warm.visible = false;
+        this.#ctx.scene.add(warm);
+        const { renderer, camera } = this.#ctx.render;
+        await renderer.compileAsync(warm, camera, this.#ctx.scene);
+        this.#ctx.scene.remove(warm);
+        warm.traverse((o) => {
+          if (o instanceof THREE.Mesh) o.geometry.dispose();
+        });
+      })
+      .catch(() => {
+        /* a cold first burst is the status quo, not a regression */
+      });
+  }
+
   /** A fresh intact target and a swept debris field — each HOIST begins a new take. */
   refresh(): void {
     if (this.#selected === 'none') return;
