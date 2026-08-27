@@ -80,6 +80,10 @@ export class DropLab implements Lab {
   get floorId(): FloorId {
     return this.#floors.active;
   }
+  /** The mounted compliant pad, for tests that assert its regime. */
+  get pad(): Floors['pad'] {
+    return this.#floors.pad;
+  }
   get heightM(): number {
     return this.#tower.targetHM;
   }
@@ -315,6 +319,24 @@ export class DropLab implements Lab {
       for (const e of this.#ctx.entities.all) {
         const p = e.curr.p;
         if (Math.hypot(p.x, p.z) > pad.halfM + e.spec.sideM / 2) continue;
+        /*
+         * A cube standing on the LOADING PLATFORM is not on its way to the mat.
+         *
+         * The gate charges a cube its remaining fall, and the platform sits 0.85 m
+         * above the pad — so an 8" tungsten cube spawned on it was credited with
+         * 63.7 kg x 9.81 x 0.54 = 337 J and bottomed the trampoline (150 J) the
+         * instant it appeared, without anything being dropped at all. Foam (30 J)
+         * went the same way (user-caught, 2026-08-26). Anything resting on the
+         * platform, inside the platform's own footprint, is the carriage's business:
+         * it neither loads the mat nor keeps it from healing.
+         */
+        const half = e.spec.sideM / 2;
+        const onPlatform =
+          this.#tower.hasPlatform &&
+          p.y - half >= this.#tower.idleDoorPlaneY - 0.02 &&
+          Math.abs(p.x) <= CARRIAGE_INTERIOR_HALF_M + half &&
+          Math.abs(p.z) <= CARRIAGE_INTERIOR_HALF_M + half;
+        if (onPlatform) continue;
         occupied = true;
         if (e.kind !== 'dynamic' || e.heldBy !== null || e.lastVel.y >= 0) continue;
         const dropM = p.y - e.spec.sideM / 2 - padTop;

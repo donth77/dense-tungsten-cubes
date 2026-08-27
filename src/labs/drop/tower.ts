@@ -510,6 +510,11 @@ export class Tower {
     return T.restCableEndYM - DOOR_DROP;
   }
 
+  /** Whether the loading platform is currently standing (idle, floor closed). */
+  get hasPlatform(): boolean {
+    return this.#platform !== null;
+  }
+
   #createPlatform(): void {
     if (this.#platform !== null) return;
     this.#platform = this.ctx.physics.addCompound({

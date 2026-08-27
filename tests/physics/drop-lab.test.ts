@@ -842,6 +842,37 @@ describe('C3.2b — the board splinters at overkill, it does not re-break', () =
   }, 120_000);
 });
 
+describe('the pad gate is platform-aware (user, 2026-08-26)', () => {
+  for (const floor of ['trampoline', 'foam'] as const) {
+    it(`spawning a heavy cube on the platform does not bottom the ${floor}`, async () => {
+      const rig = await rigWithStage();
+      rig.lab.setFloor(floor);
+      rig.run(0.2);
+      /*
+       * The gate charges a cube its remaining fall, and the loading platform sits
+       * 0.85 m above the mat — so an 8" tungsten cube resting there was credited
+       * with ~337 J and bottomed the pad the instant it spawned, with nothing
+       * dropped. A cube on the platform is the carriage's business, not the mat's.
+       */
+      rig.store.spawn('W', 8, { x: 0, y: rig.lab.platformY + 4 * IN + 0.02, z: 0 });
+      rig.run(2);
+      expect(rig.lab.pad!.regime, 'the mat is untouched').toBe('live');
+      rig.lab.teardown();
+      rig.pw.free();
+    }, 120_000);
+  }
+
+  it('but a real drop onto it still bottoms it out', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setFloor('foam');
+    rig.run(0.2);
+    fullDrop(rig, 'W', 4, 6); // far past foam's 30 J
+    expect(rig.lab.state!.verdict).toBe('bottomed-out');
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
 describe('C2.2 — burst regimes (18 §6, audit)', () => {
   /** A 3×2×2 grid of hull chunks standing in for the melon's 12 Voronoi pieces. */
   function syntheticMelonAssets(): CrushAssets {
