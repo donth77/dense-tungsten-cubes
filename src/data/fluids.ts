@@ -71,6 +71,26 @@ export const TANK_FLUID_IDS: readonly FluidId[] = (Object.keys(FLUIDS) as FluidI
   (id) => FLUIDS[id].inTankV1,
 );
 
+/**
+ * The entry voice for each fluid (19 §F1). Kept beside the fluid data rather than inside
+ * the lab so the calibration gate can assert that every fluid has one and that they are
+ * three different events, not one sound repitched.
+ *
+ * The names are declared as literals rather than as `VoiceId` because `data/` sits below
+ * `fx/` and may not import from it (08 §5). That the two agree is precisely what the F4
+ * gate checks — a cross-layer claim is exactly the kind a gate should be holding, rather
+ * than a type that would quietly make it unfalsifiable.
+ */
+export type TankVoice = 'splash_water' | 'glug_honey' | 'plink_mercury';
+
+export const TANK_VOICES: Readonly<Record<FluidId, TankVoice>> = {
+  water: 'splash_water',
+  seawater: 'splash_water',
+  glycerin: 'glug_honey',
+  honey: 'glug_honey',
+  mercury: 'plink_mercury',
+};
+
 export function densityOfFluid(id: FluidId): number {
   return FLUIDS[id].densityKgM3;
 }

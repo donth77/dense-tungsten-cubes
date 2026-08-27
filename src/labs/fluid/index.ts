@@ -9,12 +9,11 @@ import {
   makeFluidForces,
   stepVelocityQuantum,
 } from '../../core/fluid.ts';
-import { FLUIDS, TANK_FLUID_IDS, floatFraction } from '../../data/fluids.ts';
+import { FLUIDS, TANK_FLUID_IDS, TANK_VOICES, floatFraction } from '../../data/fluids.ts';
 import { M_PER_IN } from '../../data/format.ts';
 import { densityOf } from '../../data/metals.ts';
 import type { Lab, LabContext, LabPanelHandle, LabPanelModel, PanelFact } from '../lab.ts';
 import type { BodyHandle, EntityId, FluidId, MetalId, Vec3 } from '../../types.ts';
-import type { VoiceId } from '../../fx/audio.ts';
 
 /**
  * The Fluid Tank (19) — buoyancy, and the one place in this toy where gold and tungsten
@@ -138,7 +137,6 @@ interface FluidLook {
   splashVMax: number;
   splashUp: number;
   dropletSizeM: number;
-  voice: VoiceId;
 }
 
 const LOOK: Readonly<Record<FluidId, FluidLook>> = {
@@ -174,7 +172,6 @@ const LOOK: Readonly<Record<FluidId, FluidLook>> = {
     splashVMax: 1.3,
     splashUp: 0.93,
     dropletSizeM: 0.012,
-    voice: 'splash_water',
   },
   seawater: {
     color: 0x1d8b95,
@@ -202,7 +199,6 @@ const LOOK: Readonly<Record<FluidId, FluidLook>> = {
     splashVMax: 1.3,
     splashUp: 0.93,
     dropletSizeM: 0.012,
-    voice: 'splash_water',
   },
   glycerin: {
     color: 0xa89a52,
@@ -230,7 +226,6 @@ const LOOK: Readonly<Record<FluidId, FluidLook>> = {
     splashVMax: 0.7,
     splashUp: 0.7,
     dropletSizeM: 0.016,
-    voice: 'glug_honey',
   },
   /*
    * Honey (19 §2.8). There is no single "honey colour" — the Pfund scale runs from
@@ -278,7 +273,6 @@ const LOOK: Readonly<Record<FluidId, FluidLook>> = {
     splashVMax: 0.4,
     splashUp: 0.85,
     dropletSizeM: 0.02,
-    voice: 'glug_honey',
   },
   /*
    * Mercury is carried entirely by `envMapIntensity`, and neither of the two obvious
@@ -320,7 +314,6 @@ const LOOK: Readonly<Record<FluidId, FluidLook>> = {
     splashVMax: 0.9,
     splashUp: 0.9,
     dropletSizeM: 0.014,
-    voice: 'plink_mercury',
   },
 };
 
@@ -1133,7 +1126,7 @@ export class FluidLab implements Lab {
     this.#waves.add(at.x, at.z, look.waveAmp * (0.35 + 0.65 * k));
     this.#crown(at, look, k, rimM);
     this.#droplets(ctx, at, look, k, rimM);
-    ctx.fx.play(look.voice, Math.min(1, 0.3 + 0.7 * k), 0.9 + 0.25 * k);
+    ctx.fx.play(TANK_VOICES[this.#fluid], Math.min(1, 0.3 + 0.7 * k), 0.9 + 0.25 * k);
     ctx.fx.haptic(0.25 + 0.5 * k);
   }
 

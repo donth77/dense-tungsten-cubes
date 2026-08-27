@@ -7,8 +7,9 @@ import {
   stepVelocityQuantum,
   terminalSinkMps,
 } from '../../src/core/fluid.ts';
-import { FLUIDS, floatFraction } from '../../src/data/fluids.ts';
+import { FLUIDS, TANK_FLUID_IDS, TANK_VOICES, floatFraction } from '../../src/data/fluids.ts';
 import { cubeMassKg, densityOf, whaDensity } from '../../src/data/metals.ts';
+import { RECIPES, type VoiceId } from '../../src/fx/audio.ts';
 import type { BodyHandle, FluidId, ImpactEvent, MetalId } from '../../src/types.ts';
 import { DT, IN, emptyWorld } from './harness.ts';
 
@@ -298,5 +299,107 @@ describe('F0.5 honey — does the viscous term tune at 60 Hz? (19 §7.2)', () =>
       expect(floatFraction(densityOf(metal), 'water')).toBeNull();
     }
     expect(floatFraction(densityOf('Al'), 'mercury')).not.toBeNull();
+  });
+});
+
+/**
+ * Stage F4 — the calibration gate (19 §6).
+ *
+ * THE PUBLISHED TABLE. 2" cubes, tungsten at 95 % purity. Every cell is a consequence of
+ * one division — `rho_cube / rho_fluid` decides float from sink, and the float fraction
+ * IS that ratio — so this sweep is really a check that nothing anywhere has quietly
+ * become a lookup.
+ *
+ *   metal  rho     Water (998)      Honey (1420)     Mercury (13534)
+ *   W      18000   sink 4.02 m/s    sink 3.33 m/s    sink 0.56 m/s
+ *   Au     19320   sink 4.17 m/s    sink 3.46 m/s    sink 0.64 m/s
+ *   Cu      8960   sink 2.75 m/s    sink 2.24 m/s    float 66 %
+ *   Fe      7870   sink 2.56 m/s    sink 2.08 m/s    float 58 %
+ *   Ti      4510   sink 1.83 m/s    sink 1.44 m/s    float 33 %
+ *   Al      2700   sink 1.27 m/s    sink 0.92 m/s    float 20 %
+ *
+ * The solver itself is exercised in F0.1-F0.3, which reproduce 02 §6's published numbers
+ * through the real Rapier step; this stage pins the whole matrix and the claims the lab
+ * makes ABOUT it.
+ */
+describe('F4 calibration — every metal against every tank fluid', () => {
+  const METALS: readonly MetalId[] = ['W', 'Au', 'Cu', 'Fe', 'Ti', 'Al'];
+  const density = (m: MetalId): number => (m === 'W' ? whaDensity(95) : densityOf(m));
+
+  it('float-or-sink is decided by the density ratio, with no exceptions', () => {
+    for (const fluid of TANK_FLUID_IDS) {
+      for (const metal of METALS) {
+        const d = density(metal);
+        const rho = FLUIDS[fluid].densityKgM3;
+        const ff = floatFraction(d, fluid);
+        expect(ff === null).toBe(d >= rho);
+        // And when it floats, the depth is the ratio itself — not a tuned value.
+        if (ff !== null) expect(ff).toBeCloseTo(d / rho, 6);
+      }
+    }
+  });
+
+  it('the published table is what the model produces', () => {
+    const side = 2 * IN;
+    const cell = (m: MetalId, f: FluidId): string => {
+      const ff = floatFraction(density(m), f);
+      return ff === null
+        ? `sink ${terminalSinkMps(density(m), side, f)!.toFixed(2)}`
+        : `float ${(ff * 100).toFixed(0)}`;
+    };
+    expect(cell('W', 'water')).toBe('sink 4.02');
+    expect(cell('Au', 'water')).toBe('sink 4.17');
+    expect(cell('Cu', 'water')).toBe('sink 2.75');
+    expect(cell('Al', 'water')).toBe('sink 1.27');
+    expect(cell('W', 'honey')).toBe('sink 3.33');
+    expect(cell('Al', 'honey')).toBe('sink 0.92');
+    expect(cell('W', 'mercury')).toBe('sink 0.56');
+    expect(cell('Au', 'mercury')).toBe('sink 0.64');
+    expect(cell('Cu', 'mercury')).toBe('float 66');
+    expect(cell('Fe', 'mercury')).toBe('float 58');
+    expect(cell('Ti', 'mercury')).toBe('float 33');
+    expect(cell('Al', 'mercury')).toBe('float 20');
+  });
+
+  it('mercury is the only fluid in the tank that floats anything', () => {
+    for (const fluid of TANK_FLUID_IDS) {
+      const floaters = METALS.filter((m) => floatFraction(density(m), fluid) !== null);
+      expect(floaters.length).toBe(fluid === 'mercury' ? 4 : 0);
+    }
+  });
+
+  /*
+   * The lab's headline claim, and the one worth a guard: gold outruns tungsten in every
+   * fluid because it is denser, but the GAP is what the reveal is about. Buoyancy
+   * subtracts the fluid's density from both, so the denser the fluid the wider the
+   * separation — invisible in water, and the whole point in mercury.
+   */
+  it('the Au-vs-W gap widens with fluid density — the fraud only shows in mercury', () => {
+    const side = 2 * IN;
+    const gapPct = (f: FluidId): number => {
+      const au = terminalSinkMps(densityOf('Au'), side, f)!;
+      const w = terminalSinkMps(whaDensity(95), side, f)!;
+      return (au / w - 1) * 100;
+    };
+    expect(gapPct('water')).toBeLessThan(5);
+    expect(gapPct('honey')).toBeLessThan(6);
+    expect(gapPct('mercury')).toBeGreaterThan(12);
+    expect(gapPct('mercury')).toBeGreaterThan(gapPct('honey'));
+    expect(gapPct('honey')).toBeGreaterThan(gapPct('water'));
+  });
+
+  it('the purity slider moves the tungsten cube in every fluid', () => {
+    const side = 2 * IN;
+    for (const fluid of TANK_FLUID_IDS) {
+      const w90 = terminalSinkMps(whaDensity(90), side, fluid)!;
+      const w97 = terminalSinkMps(whaDensity(97), side, fluid)!;
+      expect(w97).toBeGreaterThan(w90);
+    }
+  });
+
+  it('every tank fluid has a splash voice, and they are three different events', () => {
+    const voices = TANK_FLUID_IDS.map((f) => TANK_VOICES[f] as VoiceId);
+    expect(new Set(voices).size).toBe(voices.length);
+    for (const v of voices) expect(RECIPES[v]).toBeDefined();
   });
 });
