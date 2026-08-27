@@ -1,0 +1,29 @@
+# Dense
+
+> A browser physics toy about density. Tungsten heavy-alloy cubes (90–97% W) against
+> gold, copper, iron, titanium and aluminium — weighed on real instruments, dropped from
+> a six-floor tower, crushed into things, and sunk in water, honey and mercury.
+
+Everything in it is simulated rather than animated: a cube's mass comes from its alloy
+density and its side length, and what happens next is a rigid-body solver's answer.
+
+## What you can do
+
+- **Sandbox** (`/`) — five material mats, and two line-ups: same size (wildly different
+  mass) and same mass (wildly different size).
+- **Weigh** (`/weigh`) — a digital scale and a balance. A gold cube and a tungsten cube
+  of the same size read the same number, which is why gold-plated tungsten is the classic
+  bullion fraud.
+- **Drop** (`/drop`) — a winch, six floor materials, and crush targets from an egg to a
+  cinder block. Verdicts are measured, not scripted.
+- **Tank** (`/tank`) — buoyancy in water, honey and mercury. Four of the six metals float
+  on mercury at exactly `ρ_cube / ρ_fluid` submerged; gold and tungsten sink, and come
+  apart on the way down.
+
+## Notes for machines
+
+- Static site. No accounts, no tracking, no server-side state.
+- Physics: three.js for rendering, Rapier for rigid bodies, a fixed 60 Hz step.
+- Densities and material figures come from published sources and are documented in the
+  repository, not tuned to feel good.
+- Source: https://github.com/donth77/tungsten-cube-sim (MIT)

@@ -1,0 +1,6 @@
+# Dense — a browser physics toy about density.
+# Everything here is public and static; nothing is behind a login.
+User-agent: *
+Allow: /
+
+Sitemap: https://tungsten-cube-sim.pages.dev/sitemap.xml

@@ -1,0 +1,3 @@
+# Cloudflare Pages SPA fallback: /weigh, /drop and /tank are client routes, not files.
+# 200 rather than 301 so the URL the visitor typed is the URL they keep.
+/*  /index.html  200
