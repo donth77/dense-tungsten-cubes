@@ -106,6 +106,12 @@ export class App implements Stepper {
       this.audio.unregisterEntity(id);
       this.replay.untrack(id);
       if (this.#selected === id) this.#select(null);
+      // A despawned cube must not stay held. reset() and #switchLab release the hand
+      // themselves before clearing, but a lab clearing entities on its own (Weigh's
+      // instrument switch) has no way to reach the hand, and deleteSelected never
+      // released it at all — Delete on a cube you were dragging left #heldId pointing
+      // at a dead body until the next release.
+      if (this.hand.heldId === id) this.hand.release('cancel');
     });
 
     const uiRoot = document.getElementById('ui');

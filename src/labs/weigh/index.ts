@@ -60,6 +60,11 @@ export class WeighLab implements Lab {
 
   setMode(mode: WeighModeId): void {
     if (mode === this.#mode && (this.#balance ?? this.#scale)) return;
+    // Clear the bench before the swap, not after (user, 2026-08-27). The two instruments
+    // share one spot and answer different questions, so carrying cubes across meant
+    // arriving at a fresh instrument with someone else's setup already on it. Cubes
+    // first, while the pan they may be resting on still exists.
+    this.#ctx.entities.clear();
     this.#unmount();
     this.#mode = mode;
     this.#mount(mode);
@@ -68,10 +73,10 @@ export class WeighLab implements Lab {
 
   /**
    * Moves anything standing where the instrument is about to mount out to the staging
-   * row. A lab switch now arrives with an empty field (see `App.#switchLab`), so this is
-   * for the MODE switch inside the lab: Balance and Digital Scale share one spot, the
-   * cubes survive the swap, and whatever was on the balance's pan would otherwise be
-   * standing inside the scale's housing.
+   * row. Both routes into `#mount` now arrive with an empty field — a lab switch clears
+   * (see `App.#switchLab`) and so does the mode switch above — so this earns its keep
+   * only for the paths that mount an instrument with cubes already placed, such as
+   * restoring a share link. Left in place because the failure it prevents is silent.
    *
    * Found by hand, not by test, back when cubes did persist across labs: the 2.4 kg boot
    * cube sat under the platter holding it at rest height, and the scale read a flat zero
