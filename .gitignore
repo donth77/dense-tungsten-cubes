@@ -22,3 +22,7 @@ blob-report/
 
 test-screenshots
 *.png
+
+# ...except the PNGs in public/, which are site assets rather than test output:
+# the OG card the deployed site serves, and the README screenshot.
+!public/*.png
