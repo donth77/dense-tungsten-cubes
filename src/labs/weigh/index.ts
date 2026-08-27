@@ -104,20 +104,38 @@ export class WeighLab implements Lab {
     }
   }
 
+  /** Reset View resets the rig to a cube; the instrument is the subject here. */
+  frameCamera(): void {
+    if (!this.#ctx) return;
+    if (this.#balance) this.#frameBalance();
+    else if (this.#scale) this.#frameScale();
+  }
+
+  #frameBalance(): void {
+    // The WHOLE instrument, on every screen: 1.06 m wide, 0.78 m tall, and the subject.
+    const B = config.weigh.balance;
+    const halfW = B.armM + B.panRadiusM;
+    const top = B.pivotHeightM + 0.1;
+    this.#ctx?.camera.frameRadius(Math.hypot(halfW, top / 2), {
+      fit: 'stage',
+      centreYM: top / 2,
+      margin: 1.1,
+    });
+  }
+
+  #frameScale(): void {
+    this.#ctx?.camera.frameRadius(0.4, {
+      fit: 'subject',
+      centreYM: config.weigh.scale.platterRestHeightM + 0.06,
+      margin: 1.15,
+    });
+  }
+
   #mount(mode: WeighModeId): void {
     if (mode === 'balance') {
       this.#balance = new BalanceInstrument(this.#ctx);
       this.#balance.build();
-      // The WHOLE instrument, on every screen: it is 1.06 m wide and 0.78 m tall, and
-      // it is the subject. Radius is the half-diagonal of that box, centred on it.
-      const B = config.weigh.balance;
-      const halfW = B.armM + B.panRadiusM;
-      const top = B.pivotHeightM + 0.1;
-      this.#ctx.camera.frameRadius(Math.hypot(halfW, top / 2), {
-        fit: 'stage',
-        centreYM: top / 2,
-        margin: 1.1,
-      });
+      this.#frameBalance();
     } else {
       this.#scale = new ScaleInstrument(this.#ctx);
       // The LCD shows whichever unit the player picked, without labs/ importing ui/.
@@ -132,11 +150,7 @@ export class WeighLab implements Lab {
        * 1.06 m wide. Distance is now aspect-independent: ~1.3 m on every screen,
        * with the staging row running off the sides on the narrowest ones.
        */
-      this.#ctx.camera.frameRadius(0.4, {
-        fit: 'subject',
-        centreYM: config.weigh.scale.platterRestHeightM + 0.06,
-        margin: 1.15,
-      });
+      this.#frameScale();
     }
     this.#clearInstrumentVolume();
   }

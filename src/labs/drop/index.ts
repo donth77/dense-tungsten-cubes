@@ -575,6 +575,11 @@ export class DropLab implements Lab {
    * landing zone, because the landing is the shot (16 §5.1 amended).
    */
   #lastFrameKey = '';
+  frameCamera(): void {
+    this.#lastFrameKey = ''; // the rig moved the camera; re-frame from scratch
+    this.#applyFraming();
+  }
+
   #applyFraming(): void {
     const phase = this.#tower.phase;
     const carrying = phase === 'loading' || phase === 'hoisting' || phase === 'armed';

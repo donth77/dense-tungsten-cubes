@@ -230,6 +230,21 @@ export class Hud {
     const next = order[(order.indexOf(this.#handMode) + 1) % order.length] ?? 'one';
     this.setHandMode(next);
     this.cb.onHandMode(next);
+    /*
+     * Say what it MEANS, not just what it now reads.
+     *
+     * The button's label is a force in newtons and its explanation lived in a `title`
+     * tooltip — which does not exist on touch, so on a phone this control was three
+     * numbers that changed with no stated cause. A toast at the moment of use is the one
+     * place the meaning is unmissable, on every device.
+     */
+    this.toast(
+      next === 'one'
+        ? 'One hand — 350 N. About what you can lift off a table.'
+        : next === 'two'
+          ? 'Two hands — 700 N. A determined deadlift.'
+          : 'Forklift — 50 kN. Nothing here is too heavy now.',
+    );
   }
 
   setHandMode(mode: HandModeId): void {

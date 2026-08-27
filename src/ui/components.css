@@ -64,8 +64,11 @@
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--ink3);
-  font: 600 var(--t-micro) / 1 var(--mono);
-  letter-spacing: 0.14em;
+  /* Was --t-micro (0.594rem) with 0.14em tracking: the smallest type in the app doing
+     the most important navigation job in it. --t-sm reads at arm's length, and the
+     tracking comes down a little so four tabs still fit a phone. */
+  font: 600 var(--t-sm) / 1 var(--mono);
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: var(--s2) var(--s2);
   min-height: var(--tap);

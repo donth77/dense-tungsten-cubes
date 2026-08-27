@@ -452,9 +452,17 @@ export class FluidLab implements Lab {
    * comment in `App.reset` warns about, and the one this lab shipped with).
    */
   #frame(ctx: LabContext): void {
+    /*
+     * A little more margin on a phone. The tank is a wide object and the phone layout
+     * puts panels along both edges, so a frame that sits nicely on a desktop crowds the
+     * glass against the controls — the camera's own free-area fit keeps it on screen but
+     * leaves nothing around it.
+     */
+    const phone = ctx.layoutClass().startsWith('phone');
     ctx.camera.frameRadius(Math.max(IN_W, IN_H) * 0.52, {
       fit: 'subject',
       centreYM: FLOOR_Y + IN_H * 0.5,
+      margin: phone ? 1.4 : 1.25,
     });
   }
 
@@ -1740,6 +1748,7 @@ export class FluidLab implements Lab {
   #setFluid(id: FluidId): void {
     if (id === this.#fluid) return;
     this.#fluid = id;
+    this.#resettleFloaters();
     this.#quiet.clear();
     this.#drops.length = 0;
     this.#waves.clear();
@@ -1750,6 +1759,43 @@ export class FluidLab implements Lab {
     this.#applyLook();
     this.#publish();
     this.#ctx?.ui.toast(`${FLUIDS[id].label} — ${FLUIDS[id].note}`);
+  }
+
+  /**
+   * Move everything that floats straight to its depth in the NEW fluid.
+   *
+   * Switching fluid releases every park, and a body then has to fall or rise to its new
+   * equilibrium — which for a light body is the surface bang-bang, so the duck spent a
+   * few seconds visibly shaking on the way from water's 12 % submerged to mercury's
+   * 0.9 % (user-caught, 2026-08-27). There is nothing to watch in that transit: the
+   * fluid changed in one frame, so the float poses should too. Bodies that SINK are left
+   * alone — their journey to the bottom is the whole point of the sink race.
+   */
+  #resettleFloaters(): void {
+    const ctx = this.#ctx;
+    if (!ctx) return;
+    const place = (
+      body: BodyHandle,
+      id: EntityId,
+      density: number,
+      sideM: number,
+      p: Vec3,
+    ): void => {
+      const want = floatFraction(density, this.#fluid);
+      if (want === null) return;
+      const y = SURFACE_Y + sideM * (0.5 - want);
+      ctx.physics.setTransform(body, { x: p.x, y, z: p.z }, true);
+      // Re-parked, not merely repositioned: otherwise it settles into the same shake.
+      this.#quiet.set(id, { n: REST_DWELL, sumY: y * REST_DWELL, parkY: y });
+    };
+    for (const e of ctx.entities.all) {
+      if (e.heldBy !== null) continue;
+      place(e.body, e.id, this.#density(e.spec), e.spec.sideM, ctx.physics.transformOf(e.body).p);
+    }
+    if (this.#duck !== null) {
+      const side = Math.cbrt(DUCK_LEN_M * DUCK_H_M * DUCK_W_M);
+      place(this.#duck, DUCK_ID, DUCK_DENSITY, side, ctx.physics.transformOf(this.#duck).p);
+    }
   }
 
   /**
@@ -1865,6 +1911,10 @@ export class FluidLab implements Lab {
   /** Cubes enter from above the tank, never beside it. */
   preferredSpawnPoint(): Vec3 {
     return { x: 0, y: SURFACE_Y + 0.12, z: 0 };
+  }
+
+  frameCamera(): void {
+    if (this.#ctx) this.#frame(this.#ctx);
   }
 
   reset(): void {

@@ -9,7 +9,8 @@ import { config } from '../config.ts';
  * the camera still thinks it is on desktop.
  */
 
-export type LayoutClass = 'phone-portrait' | 'phone-landscape' | 'tablet' | 'desktop';
+export type { LayoutClass } from '../types.ts';
+import type { LayoutClass } from '../types.ts';
 
 export const LAYOUT_CLASSES: readonly LayoutClass[] = [
   'phone-portrait',

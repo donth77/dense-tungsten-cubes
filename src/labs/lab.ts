@@ -3,7 +3,7 @@ import type { EntityStore } from '../core/entities.ts';
 import type { EventBus } from '../core/events.ts';
 import type { PhysicsWorld } from '../core/physics.ts';
 import type { RenderWorld } from '../core/render.ts';
-import type { EntityId, ImpactEvent, LabId, Quat, Vec3 } from '../types.ts';
+import type { EntityId, ImpactEvent, LabId, LayoutClass, Quat, Vec3 } from '../types.ts';
 
 export type { LabId } from '../types.ts';
 import type { ReplayClip, ReplayMark } from '../core/replay.ts';
@@ -51,6 +51,13 @@ export interface LabContext {
    * rather than a `ui/` import because labs/ sits below ui/ and the lint rule enforces it.
    */
   units(): 'si' | 'imperial';
+  /**
+   * The current layout class, as a getter, for the rare framing decision that genuinely
+   * differs by screen — a tank that fits a desktop frame is tight on a phone, where the
+   * panels eat the edges. Same seam shape and same reason as `units()`: it changes while
+   * a lab is mounted, and `labs/` sits below `ui/`.
+   */
+  layoutClass(): LayoutClass;
   /**
    * Sound and touch a lab may trigger directly (16 §10.5, §10.4) — the hook clack, a
    * detent buzz. Impact FX stay on the bus; this is only for what a lab CAUSES itself.
@@ -235,6 +242,17 @@ export interface Lab {
   afterPhysics?(dt: number): void;
   /** Once per rendered frame, at the interpolation alpha. Never writes to physics. */
   render?(alpha: number): void;
+  /**
+   * Re-apply this lab's own camera framing.
+   *
+   * The toolbar's Reset View resets the RIG to a cube-sized view, which is right in the
+   * Sandbox and wrong everywhere else — a tank, a tower or a balance is the subject, not
+   * a 2" cube, so the button zoomed into nothing (user-caught, 2026-08-27). `App.reset`
+   * already relies on labs re-framing themselves; this gives Reset View the same seam
+   * without also clearing instrument state, which that button must not touch.
+   */
+  frameCamera?(): void;
+
   /**
    * The global Reset action. A lab that owns an instrument has state Reset must clear —
    * a tare offset, a settled reading, a beam left against its stop — and clearing the

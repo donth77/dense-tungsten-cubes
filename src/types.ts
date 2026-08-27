@@ -8,6 +8,15 @@
 
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
+/**
+ * The viewport classes the UI switches on (12 §2).
+ *
+ * Declared here rather than in `ui/layout.ts` because `labs/` needs it for the rare
+ * framing decision that genuinely differs by screen, and `labs/` sits below `ui/`
+ * (08 §5). `ui/layout.ts` re-exports it and still owns the thresholds.
+ */
+export type LayoutClass = 'phone-portrait' | 'phone-landscape' | 'tablet' | 'desktop';
+
 /** The tank's liquids (02 §6). `data/fluids.ts` holds the numbers. */
 export type FluidId = 'water' | 'seawater' | 'glycerin' | 'honey' | 'mercury';
 

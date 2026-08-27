@@ -11,6 +11,7 @@ import type { PhysicsWorld } from './core/physics.ts';
 import { RenderWorld } from './core/render.ts';
 import { AudioBus } from './fx/audio.ts';
 import { ImpactFx } from './fx/impactfx.ts';
+import { labFromPath, pathForLab } from './core/routes.ts';
 import { decodeScene, encodeScene, SHARE_MAX_CUBES } from './core/share.ts';
 import type { SceneState } from './core/share.ts';
 import { ImpactPuffs } from './fx/particles.ts';
@@ -165,6 +166,7 @@ export class App implements Stepper {
       bus: this.bus,
       camera: { frameRadius: (r, opts) => this.rig.frameRadius(r, opts) },
       units: () => this.settings.units,
+      layoutClass: () => this.hud.layout.state.layout,
       fx: {
         play: (voice, gain, rate) => this.audio.play(voice, gain, rate),
         haptic: (s) => hapticImpact(s),
@@ -231,7 +233,9 @@ export class App implements Stepper {
         this.reset();
         break;
       case 'resetView':
+        // Rig first, lab second — the lab's framing must land last, exactly as in reset().
         this.rig.reset(this.spec.sideM);
+        this.labs.active?.frameCamera?.();
         break;
       case 'toggleUnits':
         this.settings.toggleUnits();
@@ -415,6 +419,7 @@ export class App implements Stepper {
    */
   async #switchLab(lab: LabId): Promise<void> {
     if (this.labs.activeId === lab) return;
+    this.#pushRoute(lab);
     this.stopReplay();
     this.replay.clear();
     this.hand.release('cancel');
@@ -746,13 +751,38 @@ export class App implements Stepper {
     // spawnOnEntry behaviour, hard-coded here because boot always lands in Sandbox.
     const shared = decodeScene(location.hash);
     if (shared) {
-      // A share link takes over the boot (16 §12): its lab, its cubes, its camera.
+      // A share link takes over the boot (16 §12): its lab, its cubes, its camera. It
+      // outranks the path, because it names a whole SCENE and the path only names a tab.
       void this.#bootShared(shared);
     } else {
-      void this.labs.switchTo('sandbox');
-      this.spawn();
+      const routed = labFromPath(location.pathname, import.meta.env.BASE_URL) ?? 'sandbox';
+      void this.labs.switchTo(routed).then(() => {
+        if (this.labs.active?.spawnOnEntry) this.spawn();
+      });
+      this.hud.setActiveTab(routed);
     }
+    // Back and forward walk the tabs.
+    window.addEventListener('popstate', () => {
+      const lab = labFromPath(location.pathname, import.meta.env.BASE_URL);
+      if (lab && lab !== this.labs.activeId) {
+        this.hud.setActiveTab(lab);
+        void this.#switchLab(lab);
+      }
+    });
     this.loop.start();
+  }
+
+  /**
+   * Keep the address bar on the current lab (`/`, `/weigh`, `/drop`, `/tank`).
+   *
+   * `pushState` so Back walks the tabs, which is what a URL per tab is FOR. The share
+   * fragment is carried across deliberately: a share link names a lab and a scene, and
+   * changing tabs should not silently strip the scene half of it.
+   */
+  #pushRoute(lab: LabId): void {
+    const path = pathForLab(lab, import.meta.env.BASE_URL);
+    if (location.pathname === path) return;
+    history.pushState({ lab }, '', `${path}${location.hash}`);
   }
 
   /** Screen position of the grab point, for the force meter (M1 step 17). */

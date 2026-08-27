@@ -53,6 +53,7 @@ class Rig {
       bus: { emit: () => undefined } as unknown as LabContext['bus'],
       camera: { frameRadius: () => undefined },
       units: () => 'si' as const,
+      layoutClass: () => 'desktop' as const,
       ui: {
         setControls: () => undefined,
         mountPanel: () => ({ update: () => undefined, dispose: () => undefined }),
