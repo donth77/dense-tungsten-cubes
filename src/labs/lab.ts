@@ -380,6 +380,10 @@ async function loadLab(id: LabId): Promise<Lab> {
       const mod = await import('./drop/index.ts');
       return new mod.DropLab();
     }
+    case 'fluid': {
+      const mod = await import('./fluid/index.ts');
+      return new mod.FluidLab();
+    }
     default:
       throw new Error(`lab "${String(id)}" is not built`);
   }

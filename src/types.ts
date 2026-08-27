@@ -8,6 +8,9 @@
 
 export type MetalId = 'W' | 'Au' | 'Cu' | 'Fe' | 'Ti' | 'Al';
 
+/** The tank's liquids (02 §6). `data/fluids.ts` holds the numbers. */
+export type FluidId = 'water' | 'seawater' | 'glycerin' | 'honey' | 'mercury';
+
 export type SurfaceId =
   | 'concrete'
   | 'steel'
@@ -36,7 +39,7 @@ export type EntityId = number;
  * event contract below and the share codec (`core/share.ts`) both need it, and core/
  * may not import labs/ (08 §5).
  */
-export type LabId = 'sandbox' | 'weigh' | 'drop';
+export type LabId = 'sandbox' | 'weigh' | 'drop' | 'fluid';
 
 export interface Vec3 {
   x: number;

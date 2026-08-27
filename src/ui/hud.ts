@@ -144,6 +144,7 @@ export class Hud {
       sandbox: mkTab('Sandbox', 'sandbox'),
       weigh: mkTab('Weigh', 'weigh'),
       drop: mkTab('Drop', 'drop'),
+      fluid: mkTab('Tank', 'fluid'),
     };
     const tabs = el(
       'div.tabs',
@@ -151,6 +152,7 @@ export class Hud {
       this.#tabs.sandbox,
       this.#tabs.weigh,
       this.#tabs.drop,
+      this.#tabs.fluid,
     );
 
     this.#toast = el('div.toast', { role: 'status', 'aria-live': 'polite' });

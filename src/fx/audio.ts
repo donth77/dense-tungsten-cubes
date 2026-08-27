@@ -38,7 +38,10 @@ export type VoiceId =
   | 'crunch_can'
   | 'crack_egg'
   | 'snap_wood'
-  | 'creak_wood';
+  | 'creak_wood'
+  | 'splash_water'
+  | 'glug_honey'
+  | 'plink_mercury';
 
 export interface VoiceRecipe {
   /** Fundamental of the metallic body, Hz. */
@@ -332,6 +335,52 @@ export const RECIPES: Record<VoiceId, VoiceRecipe> = {
     thumpHz: 140,
     crackle: 26,
     crackleSpanS: 0.16,
+  },
+  /*
+   * Entry splashes (19 §F1). A splash is NOT a metal voice: there is no body to ring,
+   * so `partials` is vestigial and the whole character lives in the noise stage.
+   *
+   * Water is a broadband burst with a low thump under it — the cavity collapsing is
+   * what you actually hear, and it is lower and slower than the surface break.
+   */
+  splash_water: {
+    freq: 320,
+    partials: [1, 1.7],
+    decayS: 0.09,
+    noise: 1,
+    noiseHz: 1500,
+    noiseDecayS: 0.28,
+    noiseQ: 0.5,
+    thump: 0.45,
+    thumpHz: 120,
+  },
+  /* Honey does not splash, it swallows: almost no transient, a long dull closing. */
+  glug_honey: {
+    freq: 150,
+    partials: [1, 1.4],
+    decayS: 0.3,
+    noise: 0.5,
+    noiseHz: 420,
+    noiseDecayS: 0.45,
+    noiseQ: 1.4,
+    thump: 0.7,
+    thumpHz: 70,
+  },
+  /*
+   * Mercury is 13.5x the density of water and barely wets anything, so entry reads
+   * hard and metallic rather than wet — closer to dropping a cube into ball bearings
+   * than into a pool. Short, bright, and almost no tail.
+   */
+  plink_mercury: {
+    freq: 640,
+    partials: [1, 2.4, 3.9],
+    decayS: 0.11,
+    noise: 0.75,
+    noiseHz: 2600,
+    noiseDecayS: 0.09,
+    noiseQ: 1.1,
+    thump: 0.55,
+    thumpHz: 150,
   },
 };
 
