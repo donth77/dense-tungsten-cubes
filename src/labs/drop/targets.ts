@@ -1222,10 +1222,39 @@ export class TargetRig {
       q.clone().invert(),
     );
     const cut = Math.max(-BOARD_X * 0.3, Math.min(BOARD_X * 0.3, local.x));
-    const halves: { xMin: number; xMax: number }[] = [
-      { xMin: -BOARD_X / 2, xMax: cut },
-      { xMin: cut, xMax: BOARD_X / 2 },
-    ];
+    /*
+     * How many pieces (user, 2026-08-26: "would the board shatter multiple times
+     * with enough force?").
+     *
+     * At moderate overkill: ONE break, two halves. That is right, and it stays right
+     * on a second hit too — once it has snapped, each half is a free piece resting on
+     * a block rather than a beam spanning a gap, so it gets crushed rather than bent
+     * to failure.
+     *
+     * But a monster cube does not break it repeatedly, it breaks it in MORE PLACES AT
+     * ONCE: a 15" cube is wider than the 30 cm board, so it never loads a point at
+     * midspan — it comes down across the whole board with both supports resisting, and
+     * a board loaded like that fails at several lines simultaneously and splinters.
+     * So the count grows with the overkill, and the extra cuts fall either side of the
+     * strike where the bending moment is highest.
+     */
+    const over = Math.max(0, excessJ);
+    const extra = Math.min(3, Math.floor(over / 400));
+    const cuts = [cut];
+    for (let i = 1; i <= extra; i++) {
+      const spanFrac = 0.16 + 0.1 * i;
+      const side = i % 2 === 0 ? 1 : -1;
+      const c = cut + side * BOARD_X * spanFrac;
+      if (Math.abs(c) < BOARD_X * 0.46) cuts.push(c);
+    }
+    cuts.sort((a, b) => a - b);
+    const halves: { xMin: number; xMax: number }[] = [];
+    let prev = -BOARD_X / 2;
+    for (const c of cuts) {
+      halves.push({ xMin: prev, xMax: c });
+      prev = c;
+    }
+    halves.push({ xMin: prev, xMax: BOARD_X / 2 });
     // Hinge, not launch: the pieces rotate down about the blocks they were resting on.
     const spin = Math.min(9, 2.5 + 0.5 * Math.sqrt(Math.max(0, excessJ)));
     for (const h of halves) {

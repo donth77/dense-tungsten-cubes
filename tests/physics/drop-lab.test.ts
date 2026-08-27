@@ -681,7 +681,8 @@ describe('C3.2 — the pine board (18 §6)', () => {
     fullDrop(over, 'W', 2, 2.5); // ~55 J
     over.run(1.5);
     expect(over.lab.state!.verdict).toBe('snapped');
-    // TWO halves, not a fragment cloud — that is what bending failure looks like.
+    // TWO halves, not a fragment cloud — that is what bending failure looks like at
+    // this energy. A monster cube splinters it into more (see the pin below).
     const pieces = burstPieces(over, before);
     expect(pieces.length).toBe(2);
     // They hinge down into the gap rather than flying: still over their own blocks.
@@ -809,6 +810,33 @@ describe('the two logged glitches, closed (2026-08-26)', () => {
     expect(d, 'it was moved out of the way').toBeGreaterThan(0.15);
     expect(d, 'not flung across the stage').toBeLessThan(0.7);
     expect(e.curr.p.y, 'and it is still on the plate').toBeGreaterThan(0);
+    rig.lab.teardown();
+    rig.pw.free();
+  }, 120_000);
+});
+
+describe('C3.2b — the board splinters at overkill, it does not re-break', () => {
+  it('a 2" cube gives two halves; a monster cube breaks it in more places at once', async () => {
+    const rig = await rigWithStage();
+    rig.lab.setTarget('pine-board');
+    rig.run(0.3);
+    const before = new Set(rig.pw.allBodies());
+    /*
+     * A 15" cube is WIDER than the 30 cm board, so it never loads a point at midspan:
+     * it comes down across the whole board with both supports resisting, which fails
+     * at several lines at once. Repeated breaking is the wrong model — once snapped,
+     * a half is a free piece on a block, not a beam over a gap.
+     */
+    rig.store.spawn('W', 15, { x: 0, y: rig.lab.platformY + 0.2, z: 0 });
+    rig.run(0.5);
+    rig.lab.setHeight(3);
+    rig.lab.hoist();
+    expect(rig.runUntil(() => rig.lab.towerPhase === 'armed', 12)).toBe(true);
+    rig.lab.dropNow();
+    rig.runUntil(() => rig.lab.state?.phase === 'done', 12);
+    rig.run(1);
+    // Board pieces alone exceed the two a moderate hit leaves (block rubble adds more).
+    expect(burstPieces(rig, before).length).toBeGreaterThan(3);
     rig.lab.teardown();
     rig.pw.free();
   }, 120_000);
