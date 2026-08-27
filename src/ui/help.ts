@@ -211,6 +211,21 @@ export class HelpPanel {
         ),
       );
     }
+    // The help sheet is the only place in the app that explains itself, so it is also
+    // the honest place to say where it came from. rel is not optional on a _blank link:
+    // without noopener the new tab gets a handle on this window.
+    this.#body.append(
+      el(
+        'section.help-topic.help-colophon',
+        {},
+        el('a.help-source', {
+          href: 'https://github.com/donth77/dense-tungsten-cubes#dense',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          text: 'Source on GitHub',
+        }),
+      ),
+    );
   }
 }
 

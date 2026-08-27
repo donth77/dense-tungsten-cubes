@@ -908,6 +908,25 @@
   padding-bottom: var(--s2);
   border-bottom: var(--hair) solid var(--line2);
 }
+/* A colophon, not a topic: no title, hairline above it, and quieter than the content
+   it follows. It should be findable, not the first thing the eye lands on. */
+.help-colophon {
+  padding-top: var(--s3);
+  border-top: var(--hair) solid var(--line2);
+}
+.help-source {
+  font: 500 var(--t-sm) / 1.2 var(--body);
+  color: var(--ink2);
+  text-decoration: none;
+  align-self: flex-start;
+  border-bottom: var(--hair) solid var(--line2);
+  padding-bottom: 2px;
+}
+.help-source:hover,
+.help-source:focus-visible {
+  color: var(--ink);
+  border-bottom-color: currentcolor;
+}
 .help-group {
   display: flex;
   flex-direction: column;
