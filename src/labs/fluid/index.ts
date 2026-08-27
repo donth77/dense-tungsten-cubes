@@ -73,6 +73,15 @@ const DUCK_MASS_KG = 0.05;
 /** Mass over the bounding box — what the buoyancy model actually sees. */
 const DUCK_DENSITY = DUCK_MASS_KG / (DUCK_LEN_M * DUCK_H_M * DUCK_W_M);
 
+/** Where the duck starts and where RESET puts it back — the far corner (19 §3). */
+function duckStart(): Vec3 {
+  return {
+    x: -IN_W / 2 + DUCK_LEN_M,
+    y: SURFACE_Y + DUCK_H_M,
+    z: -IN_D / 2 + DUCK_W_M * 1.6,
+  };
+}
+
 /**
  * How each fluid is rendered.
  *
@@ -376,6 +385,7 @@ export class FluidLab implements Lab {
   #ripple: RippleField | null = null;
   #surfaceMat: THREE.MeshPhysicalMaterial | null = null;
   #surfaceUniforms: Record<string, { value: unknown }> | null = null;
+  #floorUniforms: Record<string, { value: unknown }> | null = null;
   #absorbUniforms: { uSurfaceY: { value: number }; uAbsorb: { value: THREE.Vector3 } } | null =
     null;
   /** Live droplets — position, velocity, remaining life, radius. */
@@ -413,8 +423,19 @@ export class FluidLab implements Lab {
     this.#buildTank(ctx);
     this.#buildFluid(ctx);
     this.#buildPanel(ctx);
-    // 'subject', not 'stage': the tank IS the subject here, and a stage fit leaves it
-    // small in the middle of an empty floor.
+    this.#frame(ctx);
+  }
+
+  /**
+   * 'subject', not 'stage': the tank IS the subject here, and a stage fit leaves it
+   * small in the middle of an empty floor.
+   *
+   * Shared by `build` and `reset` because `App.reset` deliberately runs the rig's
+   * cube-sized reset FIRST and expects the lab's own framing to land last — a lab that
+   * does not re-frame on reset is left zoomed into nothing (the exact failure that
+   * comment in `App.reset` warns about, and the one this lab shipped with).
+   */
+  #frame(ctx: LabContext): void {
     ctx.camera.frameRadius(Math.max(IN_W, IN_H) * 0.52, {
       fit: 'subject',
       centreYM: FLOOR_Y + IN_H * 0.5,
@@ -503,6 +524,104 @@ export class FluidLab implements Lab {
     this.#disposables.push(shell);
 
     this.#buildFrame(ctx);
+    this.#buildTankFloor(ctx);
+  }
+
+  /**
+   * The tank floor — a tiled bed that REFRACTS and catches CAUSTICS, both computed in
+   * this one shader from the ripple heightfield we already have.
+   *
+   * Why a tiled floor at all: refraction and caustics are distortions of what lies under
+   * the water, so they are only visible against a PATTERN. Evan Wallace's pool is tiled
+   * for exactly this reason (04, 07, 11 §5). Over a plain floor, perfect refraction bends
+   * a uniform colour into a uniform colour and shows nothing — which is what this tank
+   * did, and most of why it read as a tinted pane rather than as water.
+   *
+   * Why it costs nothing: the floor is a known plane at a known depth below a known
+   * surface, so the refracted lookup is analytic — offset the tile UV by the surface
+   * gradient. No transmission pass, no extra render target, no second scene render. The
+   * caustic term reuses the same four height samples the gradient needs, so the whole
+   * effect is five texture fetches on one quad. Draw calls and render-target switches
+   * per frame are unchanged.
+   *
+   * The tile is generated in the shader rather than uploaded: crisper at any zoom, and
+   * no texture memory.
+   */
+  #buildTankFloor(ctx: LabContext): void {
+    const geo = new THREE.PlaneGeometry(IN_W - 0.002, IN_D - 0.002);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.75, metalness: 0 });
+    mat.defines = { ...(mat.defines ?? {}), USE_UV: '' };
+
+    const u = {
+      uHeight: { value: this.#ripple?.texture ?? null },
+      uTexel: { value: 1 / 256 },
+      uRefract: { value: 2.6 },
+      uCaustic: { value: 3.2 },
+      uTile: { value: new THREE.Vector2(9, 5) },
+      uTileA: { value: new THREE.Color(0xc3d4dc) },
+      uTileB: { value: new THREE.Color(0xaec3cd) },
+      uGrout: { value: new THREE.Color(0x6d8590) },
+    };
+    this.#floorUniforms = u;
+
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, u);
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform sampler2D uHeight;
+          uniform float uTexel;
+          uniform float uRefract;
+          uniform float uCaustic;
+          uniform vec2 uTile;
+          uniform vec3 uTileA;
+          uniform vec3 uTileB;
+          uniform vec3 uGrout;`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          {
+            // Four taps serve BOTH the refraction gradient and the caustic Laplacian.
+            float hL = texture2D(uHeight, vUv - vec2(uTexel, 0.0)).r;
+            float hR = texture2D(uHeight, vUv + vec2(uTexel, 0.0)).r;
+            float hD = texture2D(uHeight, vUv - vec2(0.0, uTexel)).r;
+            float hU = texture2D(uHeight, vUv + vec2(0.0, uTexel)).r;
+            float hC = texture2D(uHeight, vUv).r;
+
+            // Refraction: the eye ray bends at the surface, so the floor point we see is
+            // displaced along the surface gradient.
+            vec2 ruv = vUv + vec2(hL - hR, hD - hU) * uRefract;
+
+            vec2 t = ruv * uTile;
+            vec2 cell = floor(t);
+            vec2 f = abs(fract(t) - 0.5);
+            float grout = smoothstep(0.40, 0.49, max(f.x, f.y));
+            float checker = mod(cell.x + cell.y, 2.0);
+            vec3 tile = mix(uTileA, uTileB, checker);
+            tile = mix(tile, uGrout, grout);
+
+            /*
+             * Caustics: where the surface is concave it focuses light and where it is
+             * convex it spreads it. The discrete Laplacian is that curvature, and it is
+             * free here — the same four taps the gradient already needed.
+             */
+            float lap = (hL + hR + hD + hU) - 4.0 * hC;
+            float caustic = clamp(1.0 - lap * uCaustic * 90.0, 0.45, 2.6);
+
+            diffuseColor.rgb *= tile * caustic;
+          }`,
+        );
+    };
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(0, FLOOR_Y + 0.0012, 0);
+    mesh.receiveShadow = true;
+    ctx.scene.add(mesh);
+    this.#objects.push(mesh);
+    this.#disposables.push(geo, mat);
   }
 
   /**
@@ -783,7 +902,7 @@ export class FluidLab implements Lab {
 
     const body = ctx.physics.addCompound({
       kind: 'dynamic',
-      at: { x: -IN_W / 2 + DUCK_LEN_M, y: SURFACE_Y + DUCK_H_M, z: -IN_D / 2 + DUCK_W_M * 1.6 },
+      at: duckStart(),
       parts: [
         {
           shape: {
@@ -1559,6 +1678,8 @@ export class FluidLab implements Lab {
      */
     const u = this.#surfaceUniforms;
     if (r && u) u['uHeight']!.value = r.texture;
+    // The floor reads the same field, bound at the same moment for the same reason.
+    if (r && this.#floorUniforms) this.#floorUniforms['uHeight']!.value = r.texture;
   }
 
   /** Ballistic droplets, retired on their own lifetime or when they fall back in. */
@@ -1594,6 +1715,16 @@ export class FluidLab implements Lab {
   }
 
   reset(): void {
+    const ctx = this.#ctx;
+    if (ctx) {
+      this.#frame(ctx);
+      // The duck is the lab's own prop, so RESET has to put it back like any instrument
+      // state — clearing the player's cubes does not touch it.
+      if (this.#duck !== null) {
+        ctx.physics.setTransform(this.#duck, duckStart(), true);
+        this.#lastPose.delete(DUCK_ID);
+      }
+    }
     this.#quiet.clear();
     this.#wasWet.clear();
     this.#lastPose.clear();
@@ -1624,6 +1755,7 @@ export class FluidLab implements Lab {
     this.#surfaceMat = null;
     this.#surfaceUniforms = null;
     this.#absorbUniforms = null;
+    this.#floorUniforms = null;
     this.#drops.length = 0;
     this.#dropPoints = null;
     this.#dropGeo = null;
