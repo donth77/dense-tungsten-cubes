@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { config } from '../../src/config.ts';
 import { TARGET_IDS, TARGET_SPEC } from '../../src/labs/drop/targets.ts';
+import type { TargetId } from '../../src/labs/drop/targets.ts';
 import { cubeMassKg } from '../../src/data/metals.ts';
 import { RECIPES } from '../../src/fx/audio.ts';
-import type { MetalId, TargetId } from '../../src/types.ts';
+import type { MetalId } from '../../src/types.ts';
 
 /**
  * Stage C4 — the crush calibration gate (18 §6).
@@ -113,8 +114,8 @@ describe('C4 calibration — the crush ladder', () => {
    */
   it('the egg is the quasi-static one, and by far the most fragile', () => {
     expect(TARGET_SPEC.egg.sustainedN).toBeGreaterThan(0);
-    const others = BREAKABLE.filter((id) => id !== 'egg');
-    for (const id of others) {
+    for (const id of BREAKABLE) {
+      if (id === 'egg') continue;
       expect(TARGET_SPEC.egg.thresholdJ).toBeLessThan(TARGET_SPEC[id].thresholdJ);
       expect(TARGET_SPEC[id].sustainedN).toBeUndefined();
     }
