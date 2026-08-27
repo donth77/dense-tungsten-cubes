@@ -591,9 +591,24 @@ export class FluidLab implements Lab {
             float hU = texture2D(uHeight, vUv + vec2(0.0, uTexel)).r;
             float hC = texture2D(uHeight, vUv).r;
 
+            /*
+             * DEADZONE, and it is a portability fix rather than a nicety.
+             *
+             * These are half-float targets and the simulation's own snap-to-flat depends
+             * on a precision floor that is not identical across GPUs. Anything the sim
+             * leaves behind gets amplified here — the caustic term multiplies the
+             * Laplacian by 90 — so a residual invisible on one machine becomes a frozen
+             * ripple pattern on the floor of another. Thresholding here means a still
+             * field renders as a still floor on ANY hardware, without relying on the
+             * simulation having reached exactly zero.
+             */
+            vec2 grad = vec2(hL - hR, hD - hU);
+            float gm = length(grad);
+            grad *= smoothstep(0.00012, 0.0009, gm);
+
             // Refraction: the eye ray bends at the surface, so the floor point we see is
             // displaced along the surface gradient.
-            vec2 ruv = vUv + vec2(hL - hR, hD - hU) * uRefract;
+            vec2 ruv = vUv + grad * uRefract;
 
             vec2 t = ruv * uTile;
             vec2 cell = floor(t);
@@ -609,6 +624,7 @@ export class FluidLab implements Lab {
              * free here — the same four taps the gradient already needed.
              */
             float lap = (hL + hR + hD + hU) - 4.0 * hC;
+            lap = sign(lap) * max(0.0, abs(lap) - 0.0004);
             float caustic = clamp(1.0 - lap * uCaustic * 90.0, 0.45, 2.6);
 
             diffuseColor.rgb *= tile * caustic;
@@ -807,7 +823,12 @@ export class FluidLab implements Lab {
             // three's fragment 'normal' is in VIEW space. 'normalMatrix' is a
             // vertex-only uniform, but 'viewMatrix' is available here — and the surface
             // mesh has identity rotation and unit scale, so object space IS world space.
-            vec3 nWorld = normalize(vec3((hL - hR) * uNormalScale, 1.0, (hD - hU) * uNormalScale));
+            // Same half-float deadzone as the floor: a residual must not tilt the
+            // surface normal, or still water shimmers on hardware whose precision floor
+            // differs from the one the simulation's snap-to-flat was tuned against.
+            vec2 sg = vec2(hL - hR, hD - hU);
+            sg *= smoothstep(0.00012, 0.0009, length(sg));
+            vec3 nWorld = normalize(vec3(sg.x * uNormalScale, 1.0, sg.y * uNormalScale));
             normal = normalize((viewMatrix * vec4(nWorld, 0.0)).xyz);
           }`,
         );
