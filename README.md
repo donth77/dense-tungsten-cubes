@@ -4,61 +4,42 @@
 
 # Dense
 
-**A browser toy about how heavy things are.**
+**A browser toy with dense metal cubes**
 
 [![MIT licence](https://img.shields.io/badge/licence-MIT-1f6feb)](LICENSE)
 [![three.js](https://img.shields.io/badge/three.js-r185-2d3748)](https://threejs.org)
 [![Rapier](https://img.shields.io/badge/Rapier-0.19.3-2d3748)](https://rapier.rs)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)](https://www.typescriptlang.org)
-[![tests](https://img.shields.io/badge/tests-513%20passing-2ea043)](#how-it-is-tested)
+[![tests](https://img.shields.io/badge/tests-521%20passing-2ea043)](#testing)
 
-<img src="public/og.png" width="640" alt="Four metal cubes floating on mercury in a glass tank, a rubber duck beside them." />
+**[Live site →](https://dense-tungsten-cubes.pages.dev)**
+
+<img src="public/shot-drop.png" width="720" alt="The drop tower: a tungsten cube hoisted in a carriage above a watermelon on the impact plate." />
 
 </div>
 
 ---
 
-Pick up a small metal cube. It weighs more than it has any right to. That surprise is the
-whole point of this thing.
+In late 2021, crypto Twitter decided tungsten cubes were the thing. Midwest Tungsten
+Service sold out. Their sales jumped somewhere between 300% and 700% depending on who
+you read. Someone sold a 14.5-inch, one-ton cube as an NFT for about $250,000, and the
+deal came with quarterly visitation rights to look at the cube, four
+times a year.
 
-Dense gives you cubes of six metals — tungsten heavy alloy, gold, copper, iron, titanium
-and aluminium — and four places to play with them. Nothing is animated. A cube's weight
-comes from what it's made of and how big it is, and everything after that is a physics
-engine working it out.
+This is a toy for playing around with tungsten and other metal cubes.
 
-## The four rooms
+## Modes
 
-**Sandbox.** Cubes, and five mats to drop them on. Two line-ups worth trying: six cubes
-the same _size_, and six cubes the same _weight_. The second one is stranger — a kilo of
-gold is visibly smaller than a kilo of aluminium.
+**Sandbox.** Drop cubes on different surfaces and pick them back up. Load the preset
+that lines up six cubes of equal weight.
 
-**Weigh.** A digital scale and a balance. Put a gold cube on the scale, then a tungsten
-cube the same size. The number barely moves. That near-match is exactly why gold-plated
-tungsten is the classic way to fake a gold bar, and why your hand can't tell.
+**Weigh.** A digital scale and a two-pan balance. 
 
-**Drop.** A six-floor tower and a winch. Choose a height, choose what's on the floor —
-steel, oak, foam, a trampoline — and let go. Then start putting things underneath: an
-egg, a wine glass, a watermelon, a soda can, a pane of glass, a plank across two cinder
-blocks. What breaks and what survives is worked out, not scripted.
+**Drop.** Winch a cube up the tower and let it go. Pick the floor and what sits
+underneath: egg, wine glass, watermelon, soda can, or pine board. Energy at impact decides if they break.
 
-**Tank.** Water, honey, mercury. In water everything sinks, but at visibly different
-speeds. Mercury is the good one: it's so heavy that four of the six metals _float_ on it,
-each sitting at its own depth. Gold and tungsten don't — they sink, and they come apart
-on the way down. Everywhere else in this toy those two are twins; the tank is the one
-place you can see the difference.
-
-## Where the numbers come from
-
-Every density, sound and breaking point is a published figure, written down with its
-source. Tungsten heavy alloy is 17.0–18.5 g/cm³ depending on purity, and the purity
-slider really does change what a cube weighs. Mercury is 13,534 kg/m³, which is why the
-line-up floats. A cube floats at exactly `its density ÷ the fluid's density` submerged —
-that isn't a lookup table in the code, it's just what Archimedes says, and the app shows
-you the result.
-
-Where something is faked for the sake of being readable, the code says so out loud. Water
-in a half-metre tank is really almost colourless; ours is tinted so you can tell there's
-liquid in there.
+**Tank.** Water, honey or mercury. Mercury floats aluminium, titanium, iron and copper
+at different depths while gold and tungsten sink, and gold sinks faster.
 
 ## Running it
 
@@ -70,35 +51,48 @@ pnpm install
 pnpm dev
 ```
 
-Then open the address it prints. Each room has its own URL — `/`, `/weigh`, `/drop`,
-`/tank` — so you can link straight to one.
+Each mode has its own address — `/`, `/weigh`, `/drop`, `/tank` — so you can link
+straight to one.
 
-## How it is tested
+## Testing
 
-513 checks, in three groups:
+521 checks in three groups.
 
 |                     |                                                     |
 | ------------------- | --------------------------------------------------- |
 | `pnpm test`         | 201 unit tests — maths, formatting, state machines  |
-| `pnpm test:physics` | 236 tests against the real physics engine, no mocks |
-| `pnpm smoke`        | 76 browser tests across desktop, tablet and phone   |
-
-The physics tests are the interesting ones. They don't check that the code does what it
-did yesterday; they check it against numbers published before the code existed. The tank
-reproduces its float depths — copper 66%, iron 58%, titanium 33%, aluminium 20% submerged
-in mercury — because that's what the physics gives, not because anyone typed them in.
+| `pnpm test:physics` | 244 against the real physics engine, nothing mocked |
+| `pnpm smoke`        | 76 in a browser, across desktop, tablet and phone   |
 
 ## Controls
 
-Drag a cube to pick it up, if you're strong enough — there's a grip setting in the
-toolbar and heavy cubes will beat one hand. Drag empty space to look around, scroll to
-zoom. On a phone: one finger orbits, two fingers pinch and turn at once, three fingers
-pan. Press and hold the floor to drop a new cube there. Everything is listed in the help
-panel behind the **?**.
+**Mouse**
 
-## Licence
+|                             |                        |
+| --------------------------- | ---------------------- |
+| Drag a cube                 | Pick it up and move it |
+| Drag the background         | Orbit the camera       |
+| Scroll                      | Zoom in and out        |
+| Press and hold on the floor | Drop a new cube there  |
 
-MIT. See [LICENSE](LICENSE).
+**Touch**
 
-The rubber duck and several other models are third-party assets under their own licences;
-attribution is recorded in the project docs.
+|               |                              |
+| ------------- | ---------------------------- |
+| One finger    | Orbit                        |
+| Two fingers   | Pinch to zoom, twist to turn |
+| Three fingers | Pan                          |
+
+**Keys**
+
+|         |                          |
+| ------- | ------------------------ |
+| `Space` | Spawn a cube             |
+| `1`–`6` | Pick the metal           |
+| `G`     | Cycle grip strength      |
+| `F`     | Reset the camera         |
+| `R`     | Clear the lab            |
+| `U`     | Switch between kg and lb |
+| `?`     | Everything else          |
+
+Heavy cubes will beat one hand. The grip control in the toolbar switches between one hand, two hands and a forklift, and the six-inch tungsten cube will not come off the floor one-handed.
