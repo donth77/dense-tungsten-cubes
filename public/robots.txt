@@ -3,4 +3,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://tungsten-cube-sim.pages.dev/sitemap.xml
+Sitemap: https://dense-tungsten-cube-sim.pages.dev/sitemap.xml

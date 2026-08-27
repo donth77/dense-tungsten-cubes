@@ -26,4 +26,4 @@ density and its side length, and what happens next is a rigid-body solver's answ
 - Physics: three.js for rendering, Rapier for rigid bodies, a fixed 60 Hz step.
 - Densities and material figures come from published sources and are documented in the
   repository, not tuned to feel good.
-- Source: https://github.com/donth77/tungsten-cube-sim (MIT)
+- Source: https://github.com/donth77/dense-tungsten-cube-sim (MIT)
