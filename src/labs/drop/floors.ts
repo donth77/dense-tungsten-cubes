@@ -188,7 +188,15 @@ export class Floors {
         ...(chevron ? { map: chevron.map } : {}),
       });
       if (chevron) chevron.map.repeat.set(9, 1);
-      const rimLong = new THREE.BoxGeometry(P.halfM * 2 + 0.1, 0.028, 0.05);
+      /*
+       * A butt joint, not a lap joint. Both rails used to run the full span + 0.1, so
+       * at each of the four corners two identical 50 mm boxes occupied the same
+       * 50x50 square at the same height — coplanar top faces, same facing, nothing to
+       * order them by, and the plate's edges flickered (user, 2026-08-27). The short
+       * rails keep the overhang and own the corners; the long pair now stops dead at
+       * the plate edge and butts into them. Faces still meet there, but back to back.
+       */
+      const rimLong = new THREE.BoxGeometry(P.halfM * 2, 0.028, 0.05);
       const rimShort = new THREE.BoxGeometry(0.05, 0.028, P.halfM * 2 + 0.1);
       this.#disposables.push(rimMat, rimLong, rimShort);
       for (const sz of [-1, 1]) {
