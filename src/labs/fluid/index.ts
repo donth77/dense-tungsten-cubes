@@ -337,6 +337,9 @@ const DEEP_RADII = 2.5;
 /** Consecutive quiet steps before a floater is parked. */
 const REST_DWELL = 20;
 
+/** Seconds of undisturbed water before the surface effects are forced flat. */
+const ACTIVITY_FADE_S = 4;
+
 /** The duck needs a stable key in the displacement maps; cube ids never reach here. */
 const DUCK_ID = -1 as EntityId;
 
@@ -418,6 +421,18 @@ export class FluidLab implements Lab {
   readonly #finish = new Map<EntityId, { metal: MetalId; t: number }>();
   /** The reveal's caption, once the line-up has resolved. */
   #caption: string | null = null;
+  /**
+   * How recently the water was disturbed, 1 down to 0 over a few seconds.
+   *
+   * The floor's refraction and caustics and the surface's normals are all multiplied by
+   * this, so once nothing has touched the water they go to EXACTLY zero regardless of
+   * what the heightfield still holds. Thresholding the field alone was not enough: the
+   * simulation reads exactly flat here and a user still saw a stuck ripple, which means
+   * the residual differs by hardware — half-float precision is not identical across
+   * GPUs. A gate on "has anything happened lately" cannot be fooled by a residual,
+   * because it does not consult the field at all.
+   */
+  #activity = 0;
 
   build(ctx: LabContext): void {
     this.#ctx = ctx;
@@ -559,6 +574,7 @@ export class FluidLab implements Lab {
       uTexel: { value: 1 / 256 },
       uRefract: { value: 2.6 },
       uCaustic: { value: 3.2 },
+      uActivity: { value: 0 },
       uTile: { value: new THREE.Vector2(9, 5) },
       uTileA: { value: new THREE.Color(0xc3d4dc) },
       uTileB: { value: new THREE.Color(0xaec3cd) },
@@ -576,6 +592,7 @@ export class FluidLab implements Lab {
           uniform float uTexel;
           uniform float uRefract;
           uniform float uCaustic;
+          uniform float uActivity;
           uniform vec2 uTile;
           uniform vec3 uTileA;
           uniform vec3 uTileB;
@@ -605,7 +622,7 @@ export class FluidLab implements Lab {
              */
             vec2 grad = vec2(hL - hR, hD - hU);
             float gm = length(grad);
-            grad *= smoothstep(0.00012, 0.0009, gm);
+            grad *= smoothstep(0.00012, 0.0009, gm) * uActivity;
 
             // Refraction: the eye ray bends at the surface, so the floor point we see is
             // displaced along the surface gradient.
@@ -625,7 +642,7 @@ export class FluidLab implements Lab {
              * free here — the same four taps the gradient already needed.
              */
             float lap = (hL + hR + hD + hU) - 4.0 * hC;
-            lap = sign(lap) * max(0.0, abs(lap) - 0.0004);
+            lap = sign(lap) * max(0.0, abs(lap) - 0.0004) * uActivity;
             float caustic = clamp(1.0 - lap * uCaustic * 90.0, 0.45, 2.6);
 
             diffuseColor.rgb *= tile * caustic;
@@ -794,6 +811,7 @@ export class FluidLab implements Lab {
       uAmp: { value: 0.05 },
       uNormalScale: { value: 12 },
       uTexel: { value: 1 / 256 },
+      uActivity: { value: 0 },
     };
     this.#surfaceUniforms = uniforms;
 
@@ -802,16 +820,16 @@ export class FluidLab implements Lab {
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
-          '#include <common>\nuniform sampler2D uHeight;\nuniform float uAmp;',
+          '#include <common>\nuniform sampler2D uHeight;\nuniform float uAmp;\nuniform float uActivity;',
         )
         .replace(
           '#include <begin_vertex>',
-          '#include <begin_vertex>\ntransformed.y += clamp(texture2D(uHeight, uv).r, -1.0, 1.0) * uAmp;',
+          '#include <begin_vertex>\ntransformed.y += clamp(texture2D(uHeight, uv).r, -1.0, 1.0) * uAmp * uActivity;',
         );
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          '#include <common>\nuniform sampler2D uHeight;\nuniform float uNormalScale;\nuniform float uTexel;',
+          '#include <common>\nuniform sampler2D uHeight;\nuniform float uNormalScale;\nuniform float uTexel;\nuniform float uActivity;',
         )
         .replace(
           '#include <normal_fragment_begin>',
@@ -828,7 +846,7 @@ export class FluidLab implements Lab {
             // surface normal, or still water shimmers on hardware whose precision floor
             // differs from the one the simulation's snap-to-flat was tuned against.
             vec2 sg = vec2(hL - hR, hD - hU);
-            sg *= smoothstep(0.00012, 0.0009, length(sg));
+            sg *= smoothstep(0.00012, 0.0009, length(sg)) * uActivity;
             vec3 nWorld = normalize(vec3(sg.x * uNormalScale, 1.0, sg.y * uNormalScale));
             normal = normalize((viewMatrix * vec4(nWorld, 0.0)).xyz);
           }`,
@@ -949,6 +967,7 @@ export class FluidLab implements Lab {
     if (!ctx) return;
     const dt = config.loop.DT;
     this.#simT += dt;
+    this.#activity = Math.max(0, this.#activity - dt / ACTIVITY_FADE_S);
     this.#waves.step(dt);
     const readings: Reading[] = [];
 
@@ -1011,6 +1030,8 @@ export class FluidLab implements Lab {
       }
       this.#wasWet.set(e.id, wet);
 
+      // Anything actually moving in the liquid keeps the surface effects alive.
+      if (f.frac > 0 && Math.hypot(v.x, v.y, v.z) > 0.05) this.#activity = 1;
       this.#displaceFor(e.id, t.p, sideM);
 
       /*
@@ -1123,6 +1144,7 @@ export class FluidLab implements Lab {
     const rimM = 0.028 + 0.045 * k;
 
     // The physics wave, alongside the visual one — same event, same place.
+    this.#activity = 1;
     this.#waves.add(at.x, at.z, look.waveAmp * (0.35 + 0.65 * k));
     this.#crown(at, look, k, rimM);
     this.#droplets(ctx, at, look, k, rimM);
@@ -1808,6 +1830,9 @@ export class FluidLab implements Lab {
     if (r && u) u['uHeight']!.value = r.texture;
     // The floor reads the same field, bound at the same moment for the same reason.
     if (r && this.#floorUniforms) this.#floorUniforms['uHeight']!.value = r.texture;
+    const act = this.#activity;
+    if (this.#floorUniforms) this.#floorUniforms['uActivity']!.value = act;
+    if (this.#surfaceUniforms) this.#surfaceUniforms['uActivity']!.value = act;
   }
 
   /** Ballistic droplets, retired on their own lifetime or when they fall back in. */
@@ -1849,7 +1874,8 @@ export class FluidLab implements Lab {
       // The duck is the lab's own prop, so RESET has to put it back like any instrument
       // state — clearing the player's cubes does not touch it.
       if (this.#duck !== null) {
-        ctx.physics.setTransform(this.#duck, duckStart(), true);
+        // Upright, not just back in place — see `setTransform`'s `q`.
+        ctx.physics.setTransform(this.#duck, duckStart(), true, { x: 0, y: 0, z: 0, w: 1 });
         this.#lastPose.delete(DUCK_ID);
       }
     }

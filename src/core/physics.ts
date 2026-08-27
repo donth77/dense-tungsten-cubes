@@ -896,10 +896,17 @@ export class PhysicsWorld {
     out.z = w.z;
   }
 
-  setTransform(h: BodyHandle, p: Vec3, zeroVelocity = false): void {
+  /**
+   * @param q optional orientation. Without it a body keeps whatever rotation it had,
+   *   which is right for nudging something along and wrong for putting a prop BACK: a
+   *   duck knocked on its side returned to its start position still lying on its side,
+   *   which reads as "reset did nothing" (user-caught, 2026-08-27).
+   */
+  setTransform(h: BodyHandle, p: Vec3, zeroVelocity = false, q?: Quat): void {
     const rec = this.#recs.get(h);
     if (!rec) return;
     rec.body.setTranslation(p, true);
+    if (q) rec.body.setRotation(q, true);
     if (zeroVelocity) {
       rec.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rec.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
