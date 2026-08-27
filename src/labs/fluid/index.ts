@@ -417,6 +417,14 @@ export class FluidLab implements Lab {
   readonly #prevBuf = new Float32Array(MAX_DISPLACERS * 4);
   readonly #currBuf = new Float32Array(MAX_DISPLACERS * 4);
   #readings: Reading[] = [];
+  /** Simulation clock, accumulated on the fixed step so split times are deterministic. */
+  #simT = 0;
+  /** Set when DROP ALL stages the line-up; the split times are measured from it. */
+  #raceStart: number | null = null;
+  /** Seconds from release to touching the tank floor, per cube that sinks. */
+  readonly #finish = new Map<EntityId, { metal: MetalId; t: number }>();
+  /** The reveal's caption, once the line-up has resolved. */
+  #caption: string | null = null;
 
   build(ctx: LabContext): void {
     this.#ctx = ctx;
@@ -947,6 +955,7 @@ export class FluidLab implements Lab {
     const ctx = this.#ctx;
     if (!ctx) return;
     const dt = config.loop.DT;
+    this.#simT += dt;
     this.#waves.step(dt);
     const readings: Reading[] = [];
 
@@ -1010,6 +1019,19 @@ export class FluidLab implements Lab {
       this.#wasWet.set(e.id, wet);
 
       this.#displaceFor(e.id, t.p, sideM);
+
+      /*
+       * A sinker's finish is TOUCHING DOWN, judged by position rather than by speed —
+       * the same rule the rest-snap uses, and for the same reason: a cube settling onto
+       * the floor still carries contact chatter in its velocity long after it has
+       * arrived.
+       */
+      if (this.#raceStart !== null && !this.#finish.has(e.id)) {
+        const floats = floatFraction(this.#density(e.spec), this.#fluid) !== null;
+        if (!floats && t.p.y < FLOOR_Y + sideM * 0.62) {
+          this.#finish.set(e.id, { metal: e.spec.metal, t: this.#simT - this.#raceStart });
+        }
+      }
 
       const volume = sideM * sideM * sideM;
       readings.push({
@@ -1414,7 +1436,13 @@ export class FluidLab implements Lab {
      * in motion cannot stay within a few millimetres of its float pose for 20 consecutive
      * steps — at the speeds above it would travel 60 mm in that time.
      */
-    const restDy = Math.max(0.0015, sideM * 0.08);
+    /*
+     * Tight, because the parked depth IS the readout. At 8 % of the body a 2" cube could
+     * park 6 mm off its true float depth, which is 12 % of its side — copper reported
+     * 60 % submerged against its published 66 %, and the whole point of the mercury
+     * reveal is that those fractions are an exact division rather than a table.
+     */
+    const restDy = Math.max(0.0008, sideM * 0.03);
     const settled = spin < 0.05 && dy < restDy;
 
     /*
@@ -1451,10 +1479,18 @@ export class FluidLab implements Lab {
      * still reads as settled, so the step after anything disturbs it — a cube landing, a
      * fluid change — `settled` goes false, the record is dropped, and it is free again.
      */
-    const holdY = prev?.parkY ?? sumY / n;
-    this.#quiet.set(id, n >= REST_DWELL ? { n, sumY, parkY: holdY } : { n, sumY });
+    /*
+     * Park at the ANALYTIC float pose, not at the measured mean of the cycle.
+     *
+     * The mean was a workaround from when the park did not hold: forces resumed on the
+     * next step and pushed the body off any exact position, so the only place it could
+     * sit was wherever the simulation happened to balance. Now that a parked body stops
+     * receiving forces, the exact pose holds — and it should be exact, because this
+     * depth is what the panel reports as the submerged fraction.
+     */
+    this.#quiet.set(id, { n, sumY });
     if (n < REST_DWELL) return false;
-    ctx.physics.setTransform(body, { x: p.x, y: holdY, z: p.z }, true);
+    ctx.physics.setTransform(body, { x: p.x, y: parkY, z: p.z }, true);
     return true;
   }
 
@@ -1566,6 +1602,7 @@ export class FluidLab implements Lab {
       });
       facts.push({ k: 'BUOYANCY', v: `${subject.buoyN.toFixed(2)} N`, v2: '' });
     }
+    if (this.#caption) facts.push({ k: 'LINE-UP', v: this.#caption, v2: '' });
     facts.push({
       k: 'DENSITY',
       v: `${FLUIDS[this.#fluid].densityKgM3.toLocaleString()} kg/m³`,
@@ -1604,6 +1641,71 @@ export class FluidLab implements Lab {
     return model;
   }
 
+  /**
+   * The reveal's caption (03 §wow, 19 §2.2) — written once the line-up has resolved.
+   *
+   * It carries BOTH beats, because the mercury shot is not one. Four metals float, at
+   * fractions that are a division and not a table; and the two the scale cannot tell
+   * apart — gold and tungsten, the whole bullion-fraud story — come apart on the way
+   * down. Buoyancy subtracts the fluid's density from both, so a 7.3 % density gap
+   * becomes a 29.6 % gap in driving force, and gold reaches the bottom first.
+   *
+   * Nothing here is authored text about physics: every number is read back out of the
+   * running simulation.
+   */
+  #buildCaption(): void {
+    if (this.#raceStart === null || this.#caption !== null) return;
+    const floaters = this.#readings.filter((r) => r.floats);
+    const sunk = [...this.#finish.values()].sort((a, b) => a.t - b.t);
+    if (floaters.length + sunk.length < LINEUP.length) return;
+    /*
+     * Wait for every floater to be PARKED, not merely slow.
+     *
+     * The caption is written once and then stands, so it must not be latched mid-settle.
+     * Judging by speed alone did exactly that: copper was still easing down at under
+     * 0.02 m/s when the caption fired, and it reported 60 % submerged against its true
+     * 66 % — which the cube then reached and held, leaving the headline number wrong
+     * about the very thing the reveal exists to show. Parked means it has held its
+     * analytic float pose for the full dwell, so the measured fraction and the exact
+     * division have converged.
+     */
+    if (this.#readings.some((r) => r.speedMps > 0.02)) return;
+    for (const r of floaters) {
+      if ((this.#quiet.get(r.id)?.n ?? 0) < REST_DWELL) return;
+    }
+
+    const depths = floaters
+      .slice()
+      .sort((a, b) => b.frac - a.frac)
+      .map((r) => `${r.metal} ${Math.round(r.frac * 100)} %`)
+      .join(' · ');
+
+    if (sunk.length >= 2) {
+      const [first, second] = sunk as [
+        { metal: MetalId; t: number },
+        { metal: MetalId; t: number },
+      ];
+      const gapS = second.t - first.t;
+      const gap = gapS.toFixed(2);
+      /*
+       * A dead heat is the OTHER half of the story, not a failure to report one. In
+       * water gold and tungsten arrive together — indistinguishable, exactly as they are
+       * on the scale — and it is mercury that pulls them apart.
+       */
+      const finish =
+        gapS < 0.03
+          ? `${first.metal} and ${second.metal} hit bottom together.`
+          : `${first.metal} hit bottom ${gap} s before ${second.metal}.`;
+      this.#caption =
+        floaters.length > 0
+          ? `${floaters.length} float — ${depths}. ${finish}`
+          : `All six sank. ${finish}`;
+    } else if (floaters.length > 0) {
+      this.#caption = `${floaters.length} float — ${depths}.`;
+    }
+    if (this.#caption) this.#ctx?.ui.toast(this.#caption);
+  }
+
   #status(): { text: string; tone: 'neutral' | 'ok' | 'warn' | 'bad' } {
     const n = this.#readings.length;
     if (n === 0) return { text: `${FLUIDS[this.#fluid].label} — drop a cube in`, tone: 'neutral' };
@@ -1627,6 +1729,9 @@ export class FluidLab implements Lab {
     this.#drops.length = 0;
     this.#waves.clear();
     this.#ripple?.clear();
+    this.#raceStart = null;
+    this.#finish.clear();
+    this.#caption = null;
     this.#applyLook();
     this.#publish();
     this.#ctx?.ui.toast(`${FLUIDS[id].label} — ${FLUIDS[id].note}`);
@@ -1654,15 +1759,24 @@ export class FluidLab implements Lab {
         { x: startX + i * gap, y: SURFACE_Y + sideM * 1.6, z: 0 },
       );
     });
+    /*
+     * Arm the reveal. The caption is written from what the simulation DOES, so nothing
+     * is promised here — the toast below only says what is about to be attempted.
+     */
+    this.#raceStart = this.#simT;
+    this.#finish.clear();
+    this.#caption = null;
+    this.#frame(ctx);
     ctx.ui.toast(
       this.#fluid === 'mercury'
-        ? 'Four float. Gold and tungsten do not — and gold gets there first.'
+        ? 'Six metals into mercury — watch the bottom of the tank.'
         : `Six metals, one ${FLUIDS[this.#fluid].label.toLowerCase()} tank.`,
     );
   }
 
   afterPhysics(): void {
     this.#props?.capture();
+    this.#buildCaption();
     this.#publish();
   }
 
@@ -1755,6 +1869,9 @@ export class FluidLab implements Lab {
     this.#drops.length = 0;
     this.#waves.clear();
     this.#ripple?.clear();
+    this.#raceStart = null;
+    this.#finish.clear();
+    this.#caption = null;
     this.#readings = [];
     this.#publish();
   }
