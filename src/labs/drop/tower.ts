@@ -341,7 +341,15 @@ export class Tower {
     deckMat.color.setHex(0x565b61);
     this.#disposables.push(deckMat);
     const halfGeo = new THREE.BoxGeometry(IX / 2, 0.012, IX * 2);
-    const edgeGeo = new THREE.BoxGeometry(0.035, 0.014, IX * 2);
+    /*
+     * Inset from the panel it marks, on purpose. Flush, this strip shared three planes
+     * with the deck half exactly — both z ends at +-IX and its inboard face on the
+     * parting plane at x=0 — same planes, same facing, so nothing could order them and
+     * the deck flickered as the carriage moved (user, 2026-08-27). The top is already
+     * proud by 3 mm; these two insets take the remaining coincident faces out. Small
+     * enough at a 0.25 m half-span to still read as flush trim.
+     */
+    const edgeGeo = new THREE.BoxGeometry(0.035, 0.014, IX * 2 - 0.008);
     this.#disposables.push(halfGeo, edgeGeo);
     const doorY = -DOOR_DROP - 0.006;
     const mkFold = (side: -1 | 1): [THREE.Group, THREE.Group] => {
@@ -354,7 +362,7 @@ export class Tower {
       const inner = new THREE.Mesh(halfGeo, deckMat);
       inner.position.set(-side * (IX / 4), 0, 0);
       const edge = new THREE.Mesh(edgeGeo, chevMat);
-      edge.position.set(-side * (IX / 2 - 0.0175), 0.002, 0);
+      edge.position.set(-side * (IX / 2 - 0.019), 0.002, 0);
       knuckle.add(inner, edge);
       hinge.add(outer, knuckle);
       this.#carriage.add(hinge);
