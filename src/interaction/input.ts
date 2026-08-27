@@ -409,6 +409,12 @@ export class InputRouter {
     // arrows and Home/End, and a text field uses everything.
     const t = e.target;
     if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+    /*
+     * Composite widgets own their arrows too. A tablist and a radiogroup navigate with
+     * Left/Right (WAI-ARIA), and the camera also orbits on arrows — so without this the
+     * two fire together and moving between tabs spins the scene behind them.
+     */
+    if (t instanceof HTMLElement && t.closest('[role="tablist"], [role="radiogroup"]')) return;
     // Modifier combinations belong to the browser (Cmd-R, Ctrl-F …).
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 

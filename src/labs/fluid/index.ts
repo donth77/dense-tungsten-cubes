@@ -800,7 +800,13 @@ export class FluidLab implements Lab {
    * resolution.
    */
   #buildSurface(ctx: LabContext): void {
-    const geo = new THREE.PlaneGeometry(IN_W - 0.002, IN_D - 0.002, 160, 160);
+    /*
+     * 96 segments, not 160. The grid only has to carry the displacement SILHOUETTE —
+     * the lighting comes from per-fragment normals sampled at full texture resolution,
+     * so vertex density buys shape and nothing else. 160x160 was 51k triangles of the
+     * tank's 136k at phone viewport; 96x96 is 18k for a ripple that reads the same.
+     */
+    const geo = new THREE.PlaneGeometry(IN_W - 0.002, IN_D - 0.002, 96, 96);
     geo.rotateX(-Math.PI / 2);
 
     const mat = new THREE.MeshPhysicalMaterial({

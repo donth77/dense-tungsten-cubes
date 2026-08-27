@@ -186,8 +186,11 @@ export class LabPanel {
         if (c.input) c.input.value = String(op.value);
         if (c.group) {
           for (const b of Array.from(c.group.children)) {
-            const on = (b as HTMLElement).dataset['optionId'] === String(op.value);
-            b.setAttribute('aria-checked', String(on));
+            const el = b as HTMLElement;
+            const on = el.dataset['optionId'] === String(op.value);
+            el.setAttribute('aria-checked', String(on));
+            // The roving tab stop follows the selection, or Tab lands on a stale option.
+            el.tabIndex = on ? 0 : -1;
           }
         }
         break;
@@ -335,8 +338,32 @@ export class LabPanel {
         );
         b.dataset['optionId'] = opt.id;
         b.setAttribute('aria-checked', String(opt.id === c.value));
+        // Roving tabindex: a radiogroup is ONE tab stop (WAI-ARIA radio pattern).
+        b.tabIndex = opt.id === c.value ? 0 : -1;
         group.append(b);
       }
+      /*
+       * Arrows move and choose. Without this a radiogroup is only operable by tabbing
+       * through every option, which is both the wrong pattern and — because the camera
+       * also orbits on arrows — ambiguous about who owns the key.
+       */
+      group.addEventListener('keydown', (ev: Event) => {
+        const e = ev as KeyboardEvent;
+        const opts = [...group.querySelectorAll<HTMLElement>('[role="radio"]')];
+        const i = opts.findIndex((o) => o === document.activeElement);
+        if (i < 0) return;
+        const step =
+          e.key === 'ArrowRight' || e.key === 'ArrowDown'
+            ? 1
+            : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+              ? -1
+              : 0;
+        if (step === 0) return;
+        e.preventDefault();
+        const next = opts[(i + step + opts.length) % opts.length]!;
+        next.focus();
+        next.click();
+      });
       this.#controlEls.set(c.id, { group });
       return el('div.lp-control', {}, el('span.k', { text: c.label }), group);
     }

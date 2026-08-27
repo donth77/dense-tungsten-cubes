@@ -135,6 +135,7 @@ export class Hud {
         role: 'tab',
         text: label,
         'aria-selected': String(lab === 'sandbox'),
+        tabindex: lab === 'sandbox' ? '0' : '-1',
         onClick: () => {
           this.setActiveTab(lab);
           this.cb.onLabChange(lab);
@@ -146,9 +147,33 @@ export class Hud {
       drop: mkTab('Drop', 'drop'),
       fluid: mkTab('Tank', 'fluid'),
     };
+    const order: LabId[] = ['sandbox', 'weigh', 'drop', 'fluid'];
+    const onTabKey = (ev: Event): void => {
+      const e = ev as KeyboardEvent;
+      const i = order.findIndex((id) => this.#tabs[id] === document.activeElement);
+      if (i < 0) return;
+      const next =
+        e.key === 'ArrowRight' || e.key === 'ArrowDown'
+          ? (i + 1) % order.length
+          : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+            ? (i - 1 + order.length) % order.length
+            : e.key === 'Home'
+              ? 0
+              : e.key === 'End'
+                ? order.length - 1
+                : -1;
+      if (next < 0) return;
+      e.preventDefault();
+      const lab = order[next]!;
+      // Automatic activation: for a tablist whose panels are cheap to show, moving IS
+      // choosing, and it saves a keyboard user a second keypress on every tab.
+      this.setActiveTab(lab);
+      this.#tabs[lab].focus();
+      this.cb.onLabChange(lab);
+    };
     const tabs = el(
       'div.tabs',
-      { role: 'tablist' },
+      { role: 'tablist', onKeydown: onTabKey },
       this.#tabs.sandbox,
       this.#tabs.weigh,
       this.#tabs.drop,
@@ -215,7 +240,15 @@ export class Hud {
   /** Moves the selected state. Called on click, and by app.ts when a lab switch lands. */
   setActiveTab(lab: LabId): void {
     for (const [id, node] of Object.entries(this.#tabs)) {
-      node.setAttribute('aria-selected', String(id === lab));
+      const on = id === lab;
+      node.setAttribute('aria-selected', String(on));
+      /*
+       * Roving tabindex: a tablist is ONE tab stop, and arrows move within it (WAI-ARIA
+       * tabs pattern). Four separate stops meant a keyboard user had to walk past every
+       * tab to reach the toolbar, and it told a screen reader these were four unrelated
+       * buttons rather than one control with four states.
+       */
+      node.tabIndex = on ? 0 : -1;
     }
   }
 

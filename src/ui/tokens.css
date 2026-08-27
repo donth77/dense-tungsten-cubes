@@ -162,3 +162,24 @@
 .floating {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.6));
 }
+
+/*
+ * Skip link: the first thing a keyboard reaches, and invisible until it matters.
+ * Ten toolbar controls stand between the page start and the scene, and a keyboard user
+ * should not have to walk them to get to the thing the page is for.
+ */
+.skip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  padding: var(--s2) var(--s3);
+  background: var(--acc);
+  color: #0f151c;
+  font: 600 var(--t-sm) / 1 var(--mono);
+  border-radius: 0 0 var(--r2) 0;
+  transform: translateY(-120%);
+}
+.skip:focus-visible {
+  transform: none;
+}
