@@ -5,6 +5,36 @@ import { expect, test } from '@playwright/test';
  * landing cube actually lands.
  */
 test.describe('boot', () => {
+  test('keeps the loading cover up until the initial lab is ready', async ({ page }) => {
+    // A first visit has to fetch the lazy Sandbox chunk. Hold that request long enough
+    // to inspect the in-between state: an empty, temporarily framed canvas must never be
+    // exposed just because this chunk is cold or the connection is slow.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sawRequest!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      sawRequest = resolve;
+    });
+    await page.route('**/src/labs/sandbox/index.ts*', async (route) => {
+      sawRequest();
+      await held;
+      await route.continue();
+    });
+
+    const navigation = page.goto('/', { waitUntil: 'domcontentloaded' });
+    await requested;
+    await expect(page.locator('#boot')).toBeVisible();
+
+    release();
+    await navigation;
+    await page.waitForFunction(() => !!window.__dense, null, { timeout: 20_000 });
+    await expect(page.locator('#boot')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__dense?.app.labs.activeId)).toBe('sandbox');
+    expect(await page.evaluate(() => window.__dense?.bodyCount())).toBe(1);
+  });
+
   test('loads with a WebGL2 context, no console errors, and lands the first cube', async ({
     page,
   }) => {

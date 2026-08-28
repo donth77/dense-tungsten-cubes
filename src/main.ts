@@ -41,7 +41,7 @@ async function boot(): Promise<void> {
   }
 
   const app = new App(canvas, physics);
-  app.start();
+  await app.start();
   document.getElementById('boot')?.remove();
 
   // Debug facade + tooling, dynamically imported so lil-gui/stats-gl never enter the

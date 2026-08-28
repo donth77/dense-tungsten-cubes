@@ -267,6 +267,23 @@ export class CameraRig {
     this.#apply();
   }
 
+  /**
+   * Land on the current goal without damping.
+   *
+   * Boot is the one place where camera motion has no meaning: the player has not moved
+   * it, and the loading cover is still up. Initial labs frame themselves asynchronously,
+   * so exposing the rig's journey from its constructor defaults to that final frame looks
+   * like a zoom flash. App.start() calls this once after the initial lab has mounted;
+   * normal navigation and every player-driven camera change keep the damped path above.
+   */
+  snapToGoal(): void {
+    this.#state.azimuthRad = this.#goal.azimuthRad;
+    this.#state.elevationRad = this.#goal.elevationRad;
+    this.#state.distM = this.#goal.distM;
+    this.#state.target.copy(this.#goal.target);
+    this.#apply();
+  }
+
   #apply(): void {
     const { azimuthRad: az, elevationRad: el, distM: d, target } = this.#state;
     const ce = Math.cos(el);

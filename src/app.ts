@@ -750,23 +750,32 @@ export class App implements Stepper {
     this.physics.free();
   }
 
-  start(): void {
+  async start(): Promise<void> {
     this.rig.frameFor(this.spec.sideM);
-    // The boot cube spawns immediately — before the sandbox module even resolves — so
-    // the first thud never waits on a lazy import (08 §11). That is the Sandbox's
-    // spawnOnEntry behaviour, hard-coded here because boot always lands in Sandbox.
+    // Initial labs are lazy modules. Boot awaits the chosen one so the opaque loading
+    // cover stays over the canvas until the scene, its camera frame and its starter cube
+    // all exist. Letting the loop run during this await exposed an empty floor at the
+    // temporary cube-sized frame, then zoomed back out when the lab finally mounted.
     const shared = decodeScene(location.hash);
     if (shared) {
       // A share link takes over the boot (16 §12): its lab, its cubes, its camera. It
       // outranks the path, because it names a whole SCENE and the path only names a tab.
-      void this.#bootShared(shared);
+      await this.#bootShared(shared);
     } else {
       const routed = labFromPath(location.pathname, import.meta.env.BASE_URL) ?? 'sandbox';
-      void this.labs.switchTo(routed).then(() => {
-        if (this.labs.active?.spawnOnEntry) this.spawn();
-      });
       this.hud.setActiveTab(routed);
+      await this.labs.switchTo(routed);
+      if (this.labs.active?.spawnOnEntry) this.spawn();
     }
+
+    // The lab's frame is now authoritative. Pay the first render's shader/texture cost
+    // under the loading cover and expose a settled camera on the next frame; neither is
+    // player-authored motion, so damping them into view only reads as startup flicker.
+    this.rig.snapToGoal();
+    this.entities.interpolate(0);
+    this.labs.render(0);
+    this.render.render();
+
     // Back and forward walk the tabs.
     window.addEventListener('popstate', () => {
       const lab = labFromPath(location.pathname, import.meta.env.BASE_URL);

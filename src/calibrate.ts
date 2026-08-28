@@ -21,7 +21,7 @@ async function boot(): Promise<void> {
   const readout = document.getElementById('readout')!;
 
   const app = new App(canvas, await PhysicsWorld.create());
-  app.start();
+  await app.start();
 
   const { default: GUI } = await import('lil-gui');
   const gui = new GUI({ title: 'Dense · calibration' });
