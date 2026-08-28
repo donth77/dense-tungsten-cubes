@@ -51,6 +51,19 @@ export class HelpPanel {
     });
     this.#closeBtn.appendChild(icon('close'));
 
+    // The source link lives in the header, beside Close, rather than at the foot of the
+    // sheet: the help body scrolls, and a colophon under it was only ever found by
+    // someone who had already read to the end.
+    const source = el('a.iconbtn.help-source', {
+      href: 'https://github.com/donth77/dense-tungsten-cubes#dense',
+      target: '_blank',
+      // Without noopener the new tab gets a handle on this window.
+      rel: 'noopener noreferrer',
+      'aria-label': 'Source on GitHub',
+      title: 'Source on GitHub',
+    });
+    source.appendChild(icon('github'));
+
     this.root = el(
       'div.help',
       {
@@ -66,7 +79,7 @@ export class HelpPanel {
           'div.help-head',
           {},
           el('h2.help-title', { id: 'help-title', text: 'Help' }),
-          this.#closeBtn,
+          el('div.help-actions', {}, source, this.#closeBtn),
         ),
         this.#body,
       ),
@@ -211,21 +224,6 @@ export class HelpPanel {
         ),
       );
     }
-    // The help sheet is the only place in the app that explains itself, so it is also
-    // the honest place to say where it came from. rel is not optional on a _blank link:
-    // without noopener the new tab gets a handle on this window.
-    this.#body.append(
-      el(
-        'section.help-topic.help-colophon',
-        {},
-        el('a.help-source', {
-          href: 'https://github.com/donth77/dense-tungsten-cubes#dense',
-          target: '_blank',
-          rel: 'noopener noreferrer',
-          text: 'Source on GitHub',
-        }),
-      ),
-    );
   }
 }
 
