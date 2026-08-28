@@ -109,6 +109,24 @@
         display: none;
       }
       /*
+       * The skip link is hidden HERE as well as in tokens.css, because tokens.css is not
+       * guaranteed to have arrived yet. The dev server injects stylesheets from JS, so
+       * until the module graph loads there is nothing hiding it and "Skip to the scene"
+       * sat in plain sight across the whole loading state (user, 2026-08-28). The
+       * production build emits a render-blocking <link> and never showed it, which is
+       * exactly why it went unnoticed. Kept in sync with the .skip rule in tokens.css;
+       * the :focus-visible reveal there is more specific, so it still wins.
+       */
+      .skip {
+        position: fixed;
+        top: 0;
+        left: 0;
+        transform: translateY(-120%);
+      }
+      .skip:focus-visible {
+        transform: none;
+      }
+      /*
        * The room-switch indicator. Deliberately NOT a cover: the previous stage stays
        * on screen while the next lab's chunk arrives, and this only says work is
        * happening. Animated with transform, which Chrome runs on the compositor, so it

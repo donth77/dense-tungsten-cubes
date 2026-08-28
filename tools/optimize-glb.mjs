@@ -35,8 +35,17 @@ for (const file of fs
   const doc = await io.read(path);
   const notes = [];
 
-  // Structural only: merge identical accessors/meshes/textures, drop unreferenced nodes.
-  await doc.transform(dedup(), prune());
+  /*
+   * Structural only: merge identical accessors/meshes/textures, drop unreferenced nodes.
+   *
+   * keepAttributes is NOT optional here. The fragment GLBs carry no textures of their
+   * own — each piece is handed its source model's material at runtime — so prune sees
+   * UVs that nothing in the file references and strips TEXCOORD_0. The melon then burst
+   * into pieces sampling its rind at a single point: flat green (user, 2026-08-28). It
+   * hit melon, glass, block and pedestal frags alike, and no render of an INTACT target
+   * could have caught it.
+   */
+  await doc.transform(dedup(), prune({ keepAttributes: true }));
 
   let usedWebP = false;
   for (const tex of doc.getRoot().listTextures()) {
