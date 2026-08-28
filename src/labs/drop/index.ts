@@ -44,13 +44,11 @@ const D = config.drop;
 const DT = config.loop.DT;
 
 /**
- * How long before a bottoming-out landing the mat is allowed to give way, in seconds.
- * Measured in TIME so the margin is a fixed number of solver steps at any impact speed;
- * at the default 60 Hz step this is about 11 of them, which is ample for the pad to be
- * static well before the cube's swept test reaches it, while still reading as the mat
- * collapsing under the cube rather than in anticipation of it.
+ * How close the cube's bottom face has to get to the mat's resting surface before the
+ * two count as touching. A hair of slack, because the solver settles a resting contact
+ * a fraction of a millimetre inside the surface rather than exactly on it.
  */
-const CRUSH_ARM_S = 0.18;
+const CONTACT_M = 0.004;
 
 export class DropLab implements Lab {
   readonly id = 'drop' as const;
@@ -70,6 +68,11 @@ export class DropLab implements Lab {
   #targets!: TargetRig;
   /** DROP pressed before the load settled over the target — release when it has. */
   #pendingDrop = false;
+  /**
+   * "This load will bottom the mat out", decided while it was still falling and spent
+   * the moment it touches down. Cleared whenever the mat is left alone to heal.
+   */
+  #padWillBottom = false;
   #mark: { step: number } | null = null;
   /** Steps since the mark — the clip is cut the moment the post-window completes. */
   #postMarkSteps = 0;
@@ -131,6 +134,7 @@ export class DropLab implements Lab {
     this.#subjectId = null;
     this.#pendingDrop = false;
     this.#targets.refresh(); // a fresh target (and a swept debris field) per cycle
+    this.#padWillBottom = false;
     this.#floors.pad?.resetBottoming();
     // A target drop must LAND on the target: the heaviest cube (the readout's
     // subject) glides to plate centre during the climb (18 §5.5 amendment).
@@ -327,7 +331,7 @@ export class DropLab implements Lab {
       const padTop = pad.padTopRestY;
       let arrivalJ = 0;
       let occupied = false;
-      let soonestArrivalS = Infinity;
+      let touchedPad = false;
 
       for (const e of this.#ctx.entities.all) {
         const p = e.curr.p;
@@ -358,31 +362,42 @@ export class DropLab implements Lab {
             0.5 * e.massKg * e.lastVel.y * e.lastVel.y +
             e.massKg * config.physics.gravityMps2 * dropM;
         }
-        // Time to the fabric, not distance to it: the arming window has to mean the
-        // same number of solver steps whether the cube is doing 3 m/s or 12.
-        const vDownMps = -e.lastVel.y;
-        if (dropM > 0 && vDownMps > 0.05) {
-          soonestArrivalS = Math.min(soonestArrivalS, dropM / vDownMps);
-        }
+        // Touching yet? dropM is the gap from the cube's bottom face to the fabric at
+        // rest, so at or below zero the two are in contact on screen.
+        if (dropM <= CONTACT_M) touchedPad = true;
       }
       /*
-       * Decide early, collapse late.
+       * Decide while it falls, collapse when it lands.
        *
-       * The verdict is the same the moment anything is falling — the gate charges each
-       * cube its REMAINING fall, so arrivalJ clears the threshold at release, from any
-       * height. Acting on it there is what made the mat give way seconds before the
-       * cube arrived (user, 2026-08-27); the comment here used to claim it fired "a
-       * frame ahead of the landing", which the arithmetic never did.
+       * The verdict is knowable the moment anything is falling — the gate charges each
+       * cube its REMAINING fall, so arrivalJ clears the threshold at release from any
+       * height — but acting on it there made the mat give way while the cube was still
+       * in the air. Arming it a fixed time ahead only shortened that; the cube still
+       * never touched the mat the player was looking at (user, 2026-08-28).
        *
-       * So gate the physical collapse on arrival being IMMINENT. CRUSH_ARM_S is far
-       * enough ahead that the pad is long settled before the cube's swept test reaches
-       * it — the failure that made this eager in the first place was a slam teleport
-       * close to contact eating the landing (0.87 m/s recorded for a 9.5 m/s strike,
-       * 16 §7.3) — and short enough to read as the mat giving way under the load.
+       * So LATCH the verdict while it is still computable, and spend it only once the
+       * mat has been touched AND has actually run out of travel under the load. The
+       * first two cannot be read in the same breath: arrivalJ is only accumulated while
+       * the cube is clear of the fabric, so it falls to zero in the very step that
+       * touchedPad becomes true.
+       *
+       * bottomed() is what makes the collapse legible rather than instantaneous. On
+       * contact alone the mat gave way 14 ms later — one frame, indistinguishable from
+       * breaking on touch. Waiting for the fabric to genuinely exhaust its stroke buys
+       * 48 ms at a 2 m drop and 105 ms at 0.4 m: the slower the landing, the longer it
+       * visibly stretches first, which is what a mat actually does.
+       *
+       * Landing on the mat at rest height is also what keeps the impact honest. The
+       * eager flatten existed because a slam teleport close to contact ate the landing
+       * (0.87 m/s recorded for a 9.5 m/s strike, 16 §7.3); here the collision happens
+       * against a pad that has been standing still all along, and the collapse follows
+       * it rather than replacing it.
        */
-      if (arrivalJ > pad.params.bottomOutJ && soonestArrivalS <= CRUSH_ARM_S) {
+      if (arrivalJ > pad.params.bottomOutJ) this.#padWillBottom = true;
+      if (this.#padWillBottom && touchedPad && pad.bottomed()) {
         pad.setRegime('crushed');
       } else if (!occupied) {
+        this.#padWillBottom = false;
         pad.setRegime('live'); // no-op unless it was crushed
       }
     }
@@ -528,6 +543,7 @@ export class DropLab implements Lab {
     this.#clip = null;
     this.#droppedIds.clear();
     this.#subjectId = null;
+    this.#padWillBottom = false;
     this.#floors.pad?.setRegime('live');
     this.#floors.pad?.resetBottoming();
     this.#publish();

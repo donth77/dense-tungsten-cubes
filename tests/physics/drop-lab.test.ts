@@ -1,4 +1,3 @@
-import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { config } from '../../src/config.ts';
@@ -248,13 +247,22 @@ describe('the Drop Tower, as shipped', () => {
     // the first contact when it fired too close — user-visible as a 0.4 mph
     // "impact", 2026-08-25). ~9.9 m/s vacuum from 5 m, drag shaves a little.
     const imp = crushed.lab.state!.impact!;
-    writeFileSync(
-      '/private/tmp/claude-501/-Users-tomdonohue-projects-tungsten-cube-sim/6337dfa8-ecea-4672-8ddd-5daab02198d9/scratchpad/crush-impact.json',
-      JSON.stringify(imp),
-    );
     expect(imp.vMps).toBeGreaterThan(8);
     expect(imp.tFlightS).toBeLessThan(1.3);
-    expect(imp.deliveredJ).toBeGreaterThan(200);
+    /*
+     * Re-pinned 2026-08-28, when the mat stopped flattening before the cube reached it.
+     * The old model pre-collapsed the fabric, so the cube met a rigid surface and dumped
+     * over 200 J into it in one contact. It now lands on the mat at rest height and is
+     * decelerated across the full stroke, which is why the floor receives well under a
+     * tenth of the cube's own 905 J and no single contact is large.
+     *
+     * deliveredJ is not a number the player sees (16 §8.2 — the readout shows the cube's
+     * energyJ); it drives FX and the non-pad verdicts. The pins that matter here are
+     * unchanged and above: the verdict is still bottomed-out, and vMps is still honest,
+     * which is the guard against a teleport eating the landing.
+     */
+    expect(imp.deliveredJ).toBeGreaterThan(40);
+    expect(imp.deliveredJ).toBeLessThan(150);
     crushed.pw.free();
   }, 120_000);
 

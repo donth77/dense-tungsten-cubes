@@ -33,6 +33,9 @@ export const FLOOR_LABELS: Readonly<Record<FloorId, string>> = {
 
 const P = config.drop.plate;
 
+/** How long the trampoline's stand-in stays hidden waiting for the real asset. */
+const PLACEHOLDER_GRACE_MS = 120;
+
 export class Floors {
   #active: FloorId = 'steel';
   #bodies: BodyHandle[] = [];
@@ -107,6 +110,7 @@ export class Floors {
           })(),
           mat,
         );
+        phMat.name = 'trampoline-standin';
         matGroup.add(phMat);
         const legGeo = new THREE.BoxGeometry(0.05, rest, 0.05);
         this.#disposables.push(legGeo);
@@ -117,6 +121,23 @@ export class Floors {
             frameGroup.add(leg);
           }
         }
+        /*
+         * Hold the placeholder back for a beat.
+         *
+         * It is a bare disc on four box legs, and shown the instant the floor mounts it
+         * reads as the collider rather than a trampoline — a shape that flashes and is
+         * replaced (user, 2026-08-28). The asset is 112 KB and usually beats this timer,
+         * so most mounts never show it at all; on a slow connection it still appears,
+         * because a hole where the trampoline should be is worse than a rough stand-in.
+         */
+        matGroup.visible = false;
+        frameGroup.visible = false;
+        // Bare setTimeout, not window.setTimeout: labs run under the physics harness in
+        // Node, where there is no window (four pins caught this).
+        const reveal: ReturnType<typeof setTimeout> = setTimeout(() => {
+          matGroup.visible = true;
+          frameGroup.visible = true;
+        }, PLACEHOLDER_GRACE_MS);
         const gen = this.#gen;
         void loadTrampolineAsset()
           .then((asset) => {
@@ -130,6 +151,12 @@ export class Floors {
           })
           .catch(() => {
             /* placeholders stay — never a hole where the trampoline was */
+          })
+          .finally(() => {
+            clearTimeout(reveal);
+            if (gen !== this.#gen) return;
+            matGroup.visible = true;
+            frameGroup.visible = true;
           });
       } else {
         // A foam block IS a box; the surface material is the honest visual.
