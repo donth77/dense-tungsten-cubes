@@ -108,6 +108,41 @@
       .failcard {
         display: none;
       }
+      /*
+       * The room-switch indicator. Deliberately NOT a cover: the previous stage stays
+       * on screen while the next lab's chunk arrives, and this only says work is
+       * happening. Animated with transform, which Chrome runs on the compositor, so it
+       * keeps turning through the main-thread block that building a stage causes — a
+       * spinner driven by anything else would freeze exactly when it is needed.
+       */
+      #switching {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 22px;
+        height: 22px;
+        margin: -11px 0 0 -11px;
+        border: 2px solid color-mix(in srgb, var(--boot-ink) 25%, transparent);
+        border-top-color: var(--boot-ink);
+        border-radius: 50%;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 120ms linear;
+        animation: switching-spin 700ms linear infinite;
+      }
+      #switching[data-on='1'] {
+        opacity: 0.75;
+      }
+      @keyframes switching-spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #switching {
+          animation: none;
+        }
+      }
       .failcard p {
         font:
           400 14px/1.6 -apple-system,
@@ -180,6 +215,8 @@
         reports each cube's mass, density and volume.
       </canvas>
       <main id="ui" aria-label="Controls"></main>
+
+      <div id="switching" aria-hidden="true"></div>
 
       <div id="boot">
         <div>Dense</div>

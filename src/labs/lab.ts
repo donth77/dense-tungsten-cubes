@@ -329,15 +329,26 @@ export class LabManager {
   async switchTo(id: LabId): Promise<void> {
     if (this.#activeId === id) return;
     const token = ++this.#transition;
+
+    /*
+     * Fetch the module BEFORE tearing anything down.
+     *
+     * This used to demolish the old lab first and then await the dynamic import, so
+     * every switch showed an empty floor for as long as the chunk took to arrive — on
+     * a phone that is the whole "switching rooms is slow" complaint (user, 2026-08-28).
+     * The old stage costs nothing to keep rendering while we wait, and the build below
+     * is synchronous, so the swap is now a single frame instead of a gap.
+     */
+    const lab = await this.loadLabModule(id);
+    // Someone asked for a different lab while this one was loading. Drop it on the floor:
+    // it was never built, so there is nothing to tear down — and neither was the lab the
+    // player is still looking at, which is now the reason to leave it alone.
+    if (token !== this.#transition) return;
+
     this.#active?.teardown();
     this.#active = null;
     this.#activeId = null;
     this.ctx.ui.setControls('', []);
-
-    const lab = await this.loadLabModule(id);
-    // Someone asked for a different lab while this one was loading. Drop it on the floor:
-    // it was never built, so there is nothing to tear down.
-    if (token !== this.#transition) return;
 
     lab.build(this.ctx);
     this.#active = lab;

@@ -35,6 +35,28 @@ const KEY_ZOOM = 90;
  * App — the composition root (08 §4). Constructs and wires every system, and owns the
  * frame loop. Nothing else knows how the pieces fit together.
  */
+
+/**
+ * Show the room-switch spinner, returning the function that hides it.
+ *
+ * Held back by a beat so a switch that lands quickly — a warm chunk, a fast phone —
+ * never flashes it. The element is static markup in index.html rather than something
+ * built here: whatever is stalling the switch must not also be what draws the sign
+ * that a switch is stalling.
+ */
+function showSwitching(): () => void {
+  const el = document.getElementById('switching');
+  const noop = (): void => {
+    /* nothing to hide */
+  };
+  if (!el) return noop;
+  const timer = window.setTimeout(() => el.setAttribute('data-on', '1'), 150);
+  return () => {
+    window.clearTimeout(timer);
+    el.removeAttribute('data-on');
+  };
+}
+
 export class App implements Stepper {
   readonly bus = new EventBus();
   readonly render: RenderWorld;
@@ -433,7 +455,12 @@ export class App implements Stepper {
     this.entities.clear();
     // One lab's chosen camera angle must not leak into the next (user, 2026-08-25).
     this.rig.resetOrientation();
-    await this.labs.switchTo(lab);
+    const busy = showSwitching();
+    try {
+      await this.labs.switchTo(lab);
+    } finally {
+      busy();
+    }
     // Only if THIS switch is the one that landed — a quicker switch to a third lab may
     // have won the race — and only if the lab WANTS a starter cube (Lab.spawnOnEntry):
     // the Sandbox opens with its thud; the instrument labs open as a cleared bench
