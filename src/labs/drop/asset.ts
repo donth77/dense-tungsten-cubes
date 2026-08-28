@@ -332,7 +332,10 @@ export function loadCrushAssets(bundle: CrushBundle): Promise<CrushAssets> {
           plinthFrags: clone(a.plinthFrags),
         });
       case 'melon':
-        return Promise.resolve({ melonFull: a.melonFull?.clone(), melonFrags: clone(a.melonFrags) });
+        return Promise.resolve({
+          melonFull: a.melonFull?.clone(),
+          melonFrags: clone(a.melonFrags),
+        });
       case 'can':
         return Promise.resolve({ can: a.can?.clone() });
       case 'egg':
@@ -368,15 +371,14 @@ export function loadCrushAssets(bundle: CrushBundle): Promise<CrushAssets> {
       }));
     }
     case 'melon': {
-      melonGroup ??= Promise.all([
-        loadScene('watermelon.glb'),
-        loadScene('melon-frags.glb'),
-      ]).then(([melon, melonFragScene]) => ({
-        melon,
-        melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
-          makeFleshMaterial(node.position.clone()),
-        ),
-      }));
+      melonGroup ??= Promise.all([loadScene('watermelon.glb'), loadScene('melon-frags.glb')]).then(
+        ([melon, melonFragScene]) => ({
+          melon,
+          melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
+            makeFleshMaterial(node.position.clone()),
+          ),
+        }),
+      );
       return melonGroup.then((a) => ({
         melonFull: melonPart(a.melon, /Full/),
         melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
