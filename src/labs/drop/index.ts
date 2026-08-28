@@ -104,9 +104,6 @@ export class DropLab implements Lab {
     this.#tower = new Tower(ctx, () => this.#floors.topYM);
     this.#tower.build();
     this.#targets = new TargetRig(ctx);
-    // Pay the burst materials' compile cost now, on a stage where nothing is moving,
-    // rather than in the frame the cube lands (see TargetRig.warmBurstShaders).
-    this.#targets.warmBurstShaders();
     this.#applyFraming();
     this.#publish();
   }

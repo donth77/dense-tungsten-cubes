@@ -263,6 +263,8 @@ export class TargetRig {
   #pineMat: THREE.MeshStandardMaterial | null = null;
   #paneMat: THREE.MeshPhysicalMaterial | null = null;
   #assetCache: CrushAssets | null = null;
+  /** Burst materials are compiled once per rig, the first time any assets arrive. */
+  #warmed = false;
   #shardMat: THREE.Material | null = null;
   #gen = 0;
 
@@ -348,7 +350,7 @@ export class TargetRig {
   }
 
   /**
-   * Compile the burst materials NOW, while nothing is falling.
+   * Compile the burst materials while nothing is falling.
    *
    * The first melon drop of a session froze for 727 ms (measured, 2026-08-27): the
    * fragment and juice materials had never been drawn, so the driver compiled four
@@ -356,30 +358,38 @@ export class TargetRig {
    * frame, so the cube was already buried in the melon when drawing resumed — read as
    * the cube clipping through before the burst appeared (user).
    *
+   * Takes assets that have ALREADY arrived; it must never be the reason they load.
+   * Calling loadCrushAssets() to warm at lab build made entering Drop pull all 4 MB of
+   * crush GLBs up front, target 'none' included — 0 MB before, 3.99 MB after, measured
+   * on an emulated phone. Warming when a target is chosen is early enough: the cube
+   * still has to be spawned, loaded and hoisted before anything lands.
+   *
    * compileAsync warms the programs off the hot path. It does not upload the fragment
    * geometry — that still lands at burst — but the programs were the expensive half.
-   * Failure here is free: a cold burst is exactly today's behaviour.
+   * Failure here is free: a cold burst is exactly the old behaviour.
    */
-  warmBurstShaders(): void {
-    void loadCrushAssets()
-      .then(async (a) => {
-        const warm = new THREE.Group();
-        for (const set of [a.melonFrags, a.glassFrags, a.blockFrags, a.plinthFrags]) {
-          for (const f of set) warm.add(f.visual.clone());
-        }
-        // Off the floor and unrendered: compileAsync needs the object parented into a
-        // scene for lights and environment to resolve, not shown to anyone.
-        warm.visible = false;
-        this.#ctx.scene.add(warm);
-        const { renderer, camera } = this.#ctx.render;
-        await renderer.compileAsync(warm, camera, this.#ctx.scene);
+  #warmBurstShaders(a: CrushAssets): void {
+    if (this.#warmed) return;
+    this.#warmed = true;
+    const warm = new THREE.Group();
+    for (const set of [a.melonFrags, a.glassFrags, a.blockFrags, a.plinthFrags]) {
+      for (const f of set) warm.add(f.visual.clone());
+    }
+    // Off the floor and unrendered: compileAsync needs the object parented into a scene
+    // for lights and environment to resolve, not shown to anyone.
+    warm.visible = false;
+    this.#ctx.scene.add(warm);
+    const { renderer, camera } = this.#ctx.render;
+    void renderer
+      .compileAsync(warm, camera, this.#ctx.scene)
+      .then(() => {
         this.#ctx.scene.remove(warm);
         warm.traverse((o) => {
           if (o instanceof THREE.Mesh) o.geometry.dispose();
         });
       })
       .catch(() => {
-        /* a cold first burst is the status quo, not a regression */
+        this.#ctx.scene.remove(warm);
       });
   }
 
@@ -747,6 +757,7 @@ export class TargetRig {
       .then((a) => {
         if (gen !== this.#gen || !this.#deployed) return;
         this.#assetCache = a;
+        this.#warmBurstShaders(a);
         pedGroup.add(a.pedestal);
         if (this.#glassVisual) {
           this.#glassVisual.add(a.glass);
@@ -940,6 +951,7 @@ export class TargetRig {
         .then((a) => {
           if (gen !== this.#gen || !this.#deployed) return;
           this.#assetCache = a;
+          this.#warmBurstShaders(a);
           g.add(a.block.clone());
         })
         .catch(() => {
@@ -1393,6 +1405,7 @@ export class TargetRig {
       .then((a) => {
         if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
         this.#assetCache = a;
+        this.#warmBurstShaders(a);
         a.egg.position.y = -EGG_H / 2; // asset base sits at the body's bottom face
         this.#glassVisual.add(a.egg);
       })
@@ -1586,6 +1599,7 @@ export class TargetRig {
       .then((a) => {
         if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
         this.#assetCache = a;
+        this.#warmBurstShaders(a);
         const holder = new THREE.Group();
         a.can.position.y = -CAN_H / 2; // asset base sits at the body's bottom face
         holder.add(a.can);
@@ -1740,6 +1754,7 @@ export class TargetRig {
       .then((a) => {
         if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
         this.#assetCache = a;
+        this.#warmBurstShaders(a);
         a.melonFull.position.y = -0.16; // asset base sits at the body's bottom face
         this.#glassVisual.add(a.melonFull);
       })
