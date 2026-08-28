@@ -62,18 +62,27 @@ export function loadTrampolineAsset(): Promise<TrampolineAsset> {
   return trampoline.then((a) => ({ frame: a.frame.clone(), mat: a.mat.clone() }));
 }
 
-let crush: Promise<{
+/**
+ * One memo per TARGET, not one for the lot.
+ *
+ * These used to be a single Promise.all over all ten GLBs, so choosing any target
+ * downloaded every target: picking the egg, 239 KB of model, pulled 4 MB including the
+ * watermelon and the soda can. Each group below is exactly what one target mounts and
+ * bursts into, and nothing else is fetched until something asks for it.
+ *
+ * Fragments are paired with their source model because fragTemplates needs its skin —
+ * the block's aggregate, the plinth's marble, the melon's rind, the glass itself.
+ */
+let glassGroup: Promise<{
   glass: THREE.Object3D;
   pedestal: THREE.Object3D;
-  melon: THREE.Object3D;
-  can: THREE.Object3D;
-  egg: THREE.Object3D;
-  block: THREE.Object3D;
-  blockFrags: FragChunk[];
-  plinthFrags: FragChunk[];
-  melonFrags: FragChunk[];
   glassFrags: FragChunk[];
+  plinthFrags: FragChunk[];
 }> | null = null;
+let melonGroup: Promise<{ melon: THREE.Object3D; melonFrags: FragChunk[] }> | null = null;
+let canGroup: Promise<{ can: THREE.Object3D }> | null = null;
+let eggGroup: Promise<{ egg: THREE.Object3D }> | null = null;
+let structureGroup: Promise<{ block: THREE.Object3D; blockFrags: FragChunk[] }> | null = null;
 
 function loadScene(file: string): Promise<THREE.Object3D> {
   return new Promise((resolve, reject) => {
@@ -253,25 +262,30 @@ function skinOf(scene: THREE.Object3D): THREE.Material | null {
   return mat;
 }
 
+/**
+ * What one bundle hands back. Fields are optional because a target only ever loads its
+ * own models — ask for 'egg' and the melon fields are simply absent, which the burst
+ * paths already handle as "no fractured mesh available".
+ */
 export interface CrushAssets {
-  glass: THREE.Object3D;
-  pedestal: THREE.Object3D;
-  melonFull: THREE.Object3D;
+  glass?: THREE.Object3D | undefined;
+  pedestal?: THREE.Object3D | undefined;
+  melonFull?: THREE.Object3D | undefined;
   /**
    * The can carries its crush as MORPH TARGETS — influences [dent, flat] on its
    * meshes; the rig animates them. Mesh.clone() gives each clone its own
    * influence array, so states never leak between mounts.
    */
-  can: THREE.Object3D;
+  can?: THREE.Object3D | undefined;
   /** The intact shell; its break pieces are authored as thin caps, not fractured. */
-  egg: THREE.Object3D;
+  egg?: THREE.Object3D | undefined;
   /** A real cinder block, base-origined — the support pair under spanning targets. */
-  block: THREE.Object3D;
+  block?: THREE.Object3D | undefined;
   /** Structure fragments: concrete for the blocks, marble for the plinth. */
-  blockFrags: FragChunk[];
-  plinthFrags: FragChunk[];
-  melonFrags: FragChunk[];
-  glassFrags: FragChunk[];
+  blockFrags?: FragChunk[] | undefined;
+  plinthFrags?: FragChunk[] | undefined;
+  melonFrags?: FragChunk[] | undefined;
+  glassFrags?: FragChunk[] | undefined;
 }
 
 let crushOverride: CrushAssets | null = null;
@@ -285,79 +299,111 @@ export function __setCrushAssetsForTests(a: CrushAssets | null): void {
   crushOverride = a;
 }
 
-export function loadCrushAssets(): Promise<CrushAssets> {
+/** Which target's models to fetch. Each maps to exactly one group memo above. */
+export type CrushBundle = 'glass' | 'melon' | 'can' | 'egg' | 'structure';
+
+/** Broken structure shows its raw interior: grey aggregate, pale stone. */
+function concreteMat(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: 0x9a978f, roughness: 0.95 });
+}
+function marbleMat(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: 0xe4e1d8, roughness: 0.6 });
+}
+
+/**
+ * Fetch just the models one target needs.
+ *
+ * Every field is optional and only the requested bundle's are filled: a caller reads
+ * back what it asked for, and the burst paths already treat an absent fragment set as
+ * "no fractured mesh available" and fall back to the same physical outcome.
+ */
+export function loadCrushAssets(bundle: CrushBundle): Promise<CrushAssets> {
   if (crushOverride) {
     const a = crushOverride;
-    return Promise.resolve({
-      glass: a.glass.clone(),
-      pedestal: a.pedestal.clone(),
-      melonFull: a.melonFull.clone(),
-      can: a.can.clone(),
-      egg: a.egg.clone(),
-      block: a.block.clone(),
-      blockFrags: a.blockFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-      plinthFrags: a.plinthFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-      melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-      glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-    });
+    const clone = (f: FragChunk[] | undefined): FragChunk[] | undefined =>
+      f?.map((x) => ({ ...x, visual: x.visual.clone() }));
+    // Tests hand over one synthetic bundle covering everything; serve their slice of it.
+    switch (bundle) {
+      case 'glass':
+        return Promise.resolve({
+          glass: a.glass?.clone(),
+          pedestal: a.pedestal?.clone(),
+          glassFrags: clone(a.glassFrags),
+          plinthFrags: clone(a.plinthFrags),
+        });
+      case 'melon':
+        return Promise.resolve({ melonFull: a.melonFull?.clone(), melonFrags: clone(a.melonFrags) });
+      case 'can':
+        return Promise.resolve({ can: a.can?.clone() });
+      case 'egg':
+        return Promise.resolve({ egg: a.egg?.clone() });
+      case 'structure':
+        return Promise.resolve({ block: a.block?.clone(), blockFrags: clone(a.blockFrags) });
+    }
   }
-  crush ??= Promise.all([
-    loadScene('wine-glass.glb'),
-    loadScene('pedestal.glb'),
-    loadScene('watermelon.glb'),
-    loadScene('soda-can.glb'),
-    loadScene('egg.glb'),
-    loadScene('cinder-block.glb'),
-    loadScene('block-frags.glb'),
-    loadScene('pedestal-frags.glb'),
-    loadScene('melon-frags.glb'),
-    loadScene('glass-frags.glb'),
-  ]).then(
-    ([
-      glass,
-      pedestal,
-      melon,
-      can,
-      egg,
-      block,
-      blockFragScene,
-      plinthFragScene,
-      melonFragScene,
-      glassFragScene,
-    ]) => {
-      const glassSkin = skinOf(glass);
-      // Broken structure shows its raw interior: grey aggregate, pale stone.
-      const concreteMat = new THREE.MeshStandardMaterial({ color: 0x9a978f, roughness: 0.95 });
-      const marbleMat = new THREE.MeshStandardMaterial({ color: 0xe4e1d8, roughness: 0.6 });
-      const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
-      return {
-        glass,
-        pedestal,
+
+  switch (bundle) {
+    case 'glass': {
+      glassGroup ??= Promise.all([
+        loadScene('wine-glass.glb'),
+        loadScene('pedestal.glb'),
+        loadScene('glass-frags.glb'),
+        loadScene('pedestal-frags.glb'),
+      ]).then(([glass, pedestal, glassFragScene, plinthFragScene]) => {
+        const glassSkin = skinOf(glass);
+        const fallback = new THREE.MeshStandardMaterial({ color: 0x9c1a26, roughness: 0.9 });
+        const marble = marbleMat();
+        return {
+          glass,
+          pedestal,
+          glassFrags: fragTemplates(glassFragScene, glassSkin, () => glassSkin ?? fallback),
+          plinthFrags: fragTemplates(plinthFragScene, skinOf(pedestal), () => marble),
+        };
+      });
+      return glassGroup.then((a) => ({
+        glass: a.glass.clone(),
+        pedestal: a.pedestal.clone(),
+        glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+        plinthFrags: a.plinthFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+      }));
+    }
+    case 'melon': {
+      melonGroup ??= Promise.all([
+        loadScene('watermelon.glb'),
+        loadScene('melon-frags.glb'),
+      ]).then(([melon, melonFragScene]) => ({
         melon,
-        can,
-        egg,
-        block,
-        blockFrags: fragTemplates(blockFragScene, skinOf(block), () => concreteMat),
-        plinthFrags: fragTemplates(plinthFragScene, skinOf(pedestal), () => marbleMat),
         melonFrags: fragTemplates(melonFragScene, skinOf(melonPart(melon, /Full/)), (node) =>
           makeFleshMaterial(node.position.clone()),
         ),
-        glassFrags: fragTemplates(glassFragScene, glassSkin, () => glassSkin ?? fallback),
-      };
-    },
-  );
-  return crush.then((a) => ({
-    blockFrags: a.blockFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-    plinthFrags: a.plinthFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-    glass: a.glass.clone(),
-    pedestal: a.pedestal.clone(),
-    melonFull: melonPart(a.melon, /Full/),
-    can: a.can.clone(),
-    egg: a.egg.clone(),
-    block: a.block.clone(),
-    melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-    glassFrags: a.glassFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
-  }));
+      }));
+      return melonGroup.then((a) => ({
+        melonFull: melonPart(a.melon, /Full/),
+        melonFrags: a.melonFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+      }));
+    }
+    case 'can': {
+      canGroup ??= loadScene('soda-can.glb').then((can) => ({ can }));
+      return canGroup.then((a) => ({ can: a.can.clone() }));
+    }
+    case 'egg': {
+      eggGroup ??= loadScene('egg.glb').then((egg) => ({ egg }));
+      return eggGroup.then((a) => ({ egg: a.egg.clone() }));
+    }
+    case 'structure': {
+      structureGroup ??= Promise.all([
+        loadScene('cinder-block.glb'),
+        loadScene('block-frags.glb'),
+      ]).then(([block, blockFragScene]) => {
+        const concrete = concreteMat();
+        return { block, blockFrags: fragTemplates(blockFragScene, skinOf(block), () => concrete) };
+      });
+      return structureGroup.then((a) => ({
+        block: a.block.clone(),
+        blockFrags: a.blockFrags.map((f) => ({ ...f, visual: f.visual.clone() })),
+      }));
+    }
+  }
 }
 
 /** Tests only — the app keeps the caches for the session. */

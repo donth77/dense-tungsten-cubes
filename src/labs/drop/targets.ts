@@ -156,8 +156,8 @@ interface SupportSpec {
   frags: (a: CrushAssets) => FragChunk[];
 }
 const SUPPORT_SPEC = {
-  block: { thresholdJ: 250, massKg: 17, frags: (a: CrushAssets) => a.blockFrags },
-  plinth: { thresholdJ: 450, massKg: 20, frags: (a: CrushAssets) => a.plinthFrags },
+  block: { thresholdJ: 250, massKg: 17, frags: (a: CrushAssets) => a.blockFrags ?? [] },
+  plinth: { thresholdJ: 450, massKg: 20, frags: (a: CrushAssets) => a.plinthFrags ?? [] },
 } satisfies Record<string, SupportSpec>;
 type SupportKind = keyof typeof SUPPORT_SPEC;
 
@@ -373,7 +373,7 @@ export class TargetRig {
     this.#warmed = true;
     const warm = new THREE.Group();
     for (const set of [a.melonFrags, a.glassFrags, a.blockFrags, a.plinthFrags]) {
-      for (const f of set) warm.add(f.visual.clone());
+      for (const f of set ?? []) warm.add(f.visual.clone());
     }
     // Off the floor and unrendered: compileAsync needs the object parented into a scene
     // for lights and environment to resolve, not shown to anyone.
@@ -753,11 +753,12 @@ export class TargetRig {
      * model for that?"). Clones per mount; a stale generation discards the swap.
      */
     const gen = ++this.#gen;
-    void loadCrushAssets()
+    void loadCrushAssets('glass')
       .then((a) => {
         if (gen !== this.#gen || !this.#deployed) return;
         this.#assetCache = a;
         this.#warmBurstShaders(a);
+        if (!a.pedestal || !a.glass) return;
         pedGroup.add(a.pedestal);
         if (this.#glassVisual) {
           this.#glassVisual.add(a.glass);
@@ -947,9 +948,9 @@ export class TargetRig {
       this.#supports.push({ id, body, kind: 'block', at, visual: g });
       this.#group.add(g);
       const gen = this.#gen;
-      void loadCrushAssets()
+      void loadCrushAssets('structure')
         .then((a) => {
-          if (gen !== this.#gen || !this.#deployed) return;
+          if (gen !== this.#gen || !this.#deployed || !a.block) return;
           this.#assetCache = a;
           this.#warmBurstShaders(a);
           g.add(a.block.clone());
@@ -1401,9 +1402,9 @@ export class TargetRig {
     this.#glassVisual = group;
     this.#props.add(this.#glass, group);
     const gen = ++this.#gen;
-    void loadCrushAssets()
+    void loadCrushAssets('egg')
       .then((a) => {
-        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
+        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual || !a.egg) return;
         this.#assetCache = a;
         this.#warmBurstShaders(a);
         a.egg.position.y = -EGG_H / 2; // asset base sits at the body's bottom face
@@ -1595,9 +1596,9 @@ export class TargetRig {
     this.#glassVisual = group;
     this.#props.add(this.#glass, group);
     const gen = ++this.#gen;
-    void loadCrushAssets()
+    void loadCrushAssets('can')
       .then((a) => {
-        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
+        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual || !a.can) return;
         this.#assetCache = a;
         this.#warmBurstShaders(a);
         const holder = new THREE.Group();
@@ -1750,9 +1751,9 @@ export class TargetRig {
     this.#glassVisual = group;
     this.#props.add(this.#glass, group);
     const gen = ++this.#gen;
-    void loadCrushAssets()
+    void loadCrushAssets('melon')
       .then((a) => {
-        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual) return;
+        if (gen !== this.#gen || !this.#deployed || !this.#glassVisual || !a.melonFull) return;
         this.#assetCache = a;
         this.#warmBurstShaders(a);
         a.melonFull.position.y = -0.16; // asset base sits at the body's bottom face
@@ -1888,7 +1889,7 @@ export class TargetRig {
   #eggShellMaterial(): THREE.Material {
     this.#eggMat ??= (() => {
       let found: THREE.Material | null = null;
-      this.#assetCache?.egg.traverse((o) => {
+      this.#assetCache?.egg?.traverse((o) => {
         if (!found && o instanceof THREE.Mesh) found = o.material as THREE.Material;
       });
       return (
