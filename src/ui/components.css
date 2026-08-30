@@ -18,7 +18,16 @@
   display: flex;
   align-items: center;
   gap: var(--s3);
-  background: linear-gradient(var(--bg) 45%, transparent);
+  /*
+   * SOLID, not a fade (user, 2026-08-30).
+   *
+   * This was `linear-gradient(var(--bg) 45%, transparent)`, which is only opaque for the
+   * top 21 px of a 48 px bar. Over the Sandbox's dark backdrop that melts nicely; over
+   * the Weigh Station's pale wall the tabs sit on bare stage and the hairline underneath
+   * rules off nothing — the bar reads as missing its background, because below the
+   * halfway mark it is. A bar with an edge should have a ground.
+   */
+  background: var(--bg);
   border-bottom: var(--hair) solid var(--line);
 }
 #app.phone-portrait .topbar,
@@ -805,6 +814,9 @@
 .lineup-buttons {
   display: flex;
   gap: var(--s2);
+  /* Two rows of two on a 195 px phone half: wrapping keeps every chip reachable, and
+     with four chips there is nothing worth hiding behind a scroll. */
+  flex-wrap: wrap;
 }
 .lineup-buttons .chip {
   min-height: var(--tap);
@@ -985,10 +997,15 @@
   }
 }
 
-/* Lab controls are actions, not toggles — no pressed state to express. */
-.chip.action[aria-pressed] {
-  background: var(--card2);
-}
+/*
+ * A lab control MAY carry state now (user, 2026-08-30): the Weigh Station's instrument
+ * and its armed pan are both "which one am I on?", and the row said nothing at all
+ * before. The rule that used to sit here flattened the pressed background back to
+ * --card2 while leaving --bg ink on it, which is dark text on a dark chip — so the
+ * pressed chip is left to the base .chip[aria-pressed='true'] treatment instead.
+ * A control with no state to express (the Sandbox's line-ups) sets no aria-pressed at
+ * all and never matches it.
+ */
 
 /* ---------------------------------------------------------------------------
    Lab panel model renderer (16 §11.5) — shares .labpanel-inner's card
@@ -1143,4 +1160,79 @@
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollable rows say so (user, 2026-08-30)
+
+   A row that scrolls sideways with its scrollbar hidden gives no sign that it does.
+   The Drop Tower's TARGET row is the bad case: seven chips in a phone half wide
+   enough for three — the pane, the can, the melon and the board were off the edge
+   and undiscoverable. `ui/scrollhint.ts` keeps `data-overflow` current on the row and
+   the edge that has more behind it grows a caret.
+
+   A plain edge fade was tried first and is not enough on this palette: a chip is
+   --card2 on a --card panel, four points apart, so dissolving one changes almost
+   nothing. The caret says it in a glyph, and its gradient does the dissolving
+   underneath.
+
+   `position: sticky` is what pins it to the VISIBLE edge rather than to the content,
+   and it needs no wrapper element around rows that three different components build.
+
+   The negative margin is load-bearing. The caret is a flex ITEM, so its width AND the
+   row's own gap would both add to the scroll width — and a row that only just fits
+   would then overflow BECAUSE it grew a marker saying it overflows, offering 34 px of
+   scrolling to nothing. Cancelling both keeps the measurement honest and lets the caret
+   overlay the tail of the last chip, which is where it belongs anyway.
+   --------------------------------------------------------------------------- */
+
+[data-overflow] {
+  --hint-w: 30px;
+  /* Each row hands over its own gap; the margin below has to cancel that too. The
+     attribute is in the selector so these beat the default whatever the source order. */
+  --hint-gap: 0px;
+}
+.chips[data-overflow],
+.lp-seg[data-overflow] {
+  --hint-gap: var(--s1);
+}
+.lineup-buttons[data-overflow] {
+  --hint-gap: var(--s2);
+}
+[data-overflow]::before,
+[data-overflow]::after {
+  position: sticky;
+  flex: none;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: var(--hint-w);
+  display: flex;
+  align-items: center;
+  color: var(--ink2);
+  font: 600 var(--t-val) / 1 var(--mono);
+  pointer-events: none;
+}
+[data-overflow]::after {
+  content: '›';
+  right: 0;
+  margin-left: calc(-1 * (var(--hint-w) + var(--hint-gap)));
+  justify-content: flex-end;
+  /* Fades the chip behind it into the panel, so the caret reads as an edge rather
+     than as one more thing sitting in the row. */
+  background: linear-gradient(to right, transparent, var(--card) 55%);
+}
+[data-overflow]::before {
+  content: '‹';
+  left: 0;
+  margin-right: calc(-1 * (var(--hint-w) + var(--hint-gap)));
+  justify-content: flex-start;
+  background: linear-gradient(to left, transparent, var(--card) 55%);
+}
+/* Nothing more that way: no claim that there is. Hidden rather than removed — removing
+   it would change the scroll width, which changes the state, which would put it back. */
+[data-overflow='none']::after,
+[data-overflow='start']::after,
+[data-overflow='none']::before,
+[data-overflow='end']::before {
+  visibility: hidden;
 }

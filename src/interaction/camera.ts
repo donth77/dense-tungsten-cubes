@@ -119,11 +119,6 @@ export class CameraRig {
     this.#goal.target.y = clamp(this.#goal.target.y, 0, config.camera.panLimitYM);
   }
 
-  /** Gentle re-target onto a selected cube. Deliberately does not orbit (08 §8.5). */
-  focusOn(point: Vec3): void {
-    this.#goal.target.set(point.x, point.y, point.z);
-  }
-
   reset(sideM?: number): void {
     this.#goal.azimuthRad = config.camera.azimuthDeg * DEG;
     this.#goal.elevationRad = config.camera.elevationDeg * DEG;
@@ -208,12 +203,26 @@ export class CameraRig {
 
   #lastFrame: { radiusM: number; opts: FrameOptions } | null = null;
 
-  setViewportOffset(xPx: number, yPx: number): void {
+  /**
+   * Report how much of the frame the UI covers.
+   *
+   * @param reframe whether the coverage change should also RE-FIT the stage — i.e.
+   * whether the camera may change distance because of it. Only a change to the panels
+   * themselves may: a lab mounting its rig panel puts a phone into the split band, and
+   * a frame computed against the whole viewport then puts half that rig behind them
+   * (user, 2026-08-25).
+   *
+   * Selecting a cube must NOT. The info card is coverage too, and re-fitting for it
+   * meant every tap on a cube pulled the camera back to the lab's own framing distance —
+   * undoing the player's zoom, on a gesture that has nothing to do with the camera
+   * (user, 2026-08-30). The offset still moves, so the subject slides clear of the card;
+   * the distance is the player's and stays put.
+   */
+  setViewportOffset(xPx: number, yPx: number, reframe = true): void {
+    if (xPx === this.#viewOffsetPx.x && yPx === this.#viewOffsetPx.y) return;
     this.#viewOffsetPx = { x: xPx, y: yPx };
     this.#applyViewOffset();
-    // The free area changed, so the fit did too: a frame computed against the WHOLE
-    // viewport puts half the rig behind the panels (phone drop mode, user 2026-08-25).
-    this.refit();
+    if (reframe) this.refit();
   }
 
   /**

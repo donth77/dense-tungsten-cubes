@@ -1,6 +1,7 @@
 import type { LabPanelHandle, LabPanelModel, PanelControl, PanelReading } from '../labs/lab.ts';
 import { button, el, setClass, setText } from './dom.ts';
 import { bindSlider } from './slider.ts';
+import { attachScrollHint } from './scrollhint.ts';
 
 /**
  * Renders a `LabPanelModel` (16 §11.5) — keyed DOM, built once, updated by
@@ -140,8 +141,12 @@ export class LabPanel {
   dispose(): void {
     this.#model = null;
     this.#root = null;
+    for (const off of this.#hints.splice(0)) off();
     this.host.replaceChildren();
   }
+
+  /** One per segmented row, cleared on every rebuild — see `attachScrollHint`. */
+  readonly #hints: (() => void)[] = [];
 
   #update(next: LabPanelModel): void {
     const ops = panelDelta(this.#model, next);
@@ -227,6 +232,8 @@ export class LabPanel {
     this.#factEls = [];
     this.#controlEls.clear();
     this.#actionEls.clear();
+    // Every row about to be replaced takes its scroll observer with it.
+    for (const off of this.#hints.splice(0)) off();
 
     this.#statusEl = el('span.lp-status', { text: model.status.text });
     this.#statusEl.dataset['tone'] = model.status.tone;
@@ -365,6 +372,9 @@ export class LabPanel {
         next.click();
       });
       this.#controlEls.set(c.id, { group });
+      // On a phone this row scrolls rather than wraps, and four of the Drop Tower's
+      // seven targets were off the edge with nothing saying so (user, 2026-08-30).
+      this.#hints.push(attachScrollHint(group));
       return el('div.lp-control', {}, el('span.k', { text: c.label }), group);
     }
     // toggle

@@ -123,9 +123,14 @@ export class SandboxLab implements Lab {
   }
 
   #buildPanel(ctx: LabContext): void {
-    ctx.ui.setControls('Line-ups', [
-      { label: 'Same size', onSelect: () => this.#sameSize(ctx) },
-      { label: 'Same mass', onSelect: () => this.#sameMass(ctx) },
+    ctx.ui.setControls([
+      {
+        label: 'Line-ups',
+        controls: [
+          { label: 'Same size', onSelect: () => this.#sameSize(ctx) },
+          { label: 'Same mass', onSelect: () => this.#sameMass(ctx) },
+        ],
+      },
     ]);
   }
 

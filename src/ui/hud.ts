@@ -1,6 +1,6 @@
 import './components.css';
 import { LabPanel } from './labpanel.ts';
-import type { LabPanelHandle, LabPanelModel } from '../labs/lab.ts';
+import type { LabControlGroup, LabPanelHandle, LabPanelModel } from '../labs/lab.ts';
 import type { LabId } from '../labs/lab.ts';
 import { button, clear, el, setText } from './dom.ts';
 import { InfoCard } from './infocard.ts';
@@ -9,6 +9,7 @@ import { ForceMeter } from './meter.ts';
 import { HelpPanel } from './help.ts';
 import { icon } from './icons.ts';
 import { PressRing } from './pressring.ts';
+import { attachScrollHint } from './scrollhint.ts';
 import { Spawner } from './spawner.ts';
 import type { SpawnerCallbacks } from './spawner.ts';
 import type { SettingsStore } from './settings.ts';
@@ -32,8 +33,12 @@ export interface HudCallbacks extends SpawnerCallbacks {
    * Where the camera should centre its framing, in CSS px off the viewport centre.
    * Fires whenever the UI's coverage changes — layout class, sheet height, the info card
    * appearing or going — so the camera follows the *free* area, not the canvas (12 §3).
+   *
+   * `reframe` says whether the camera may also re-fit its DISTANCE to the new free area.
+   * The panels may (a mounting rig panel halves a phone's stage); the info card may not,
+   * because that would zoom the stage out every time a cube is tapped.
    */
-  onViewportOffset(offset: { x: number; y: number }): void;
+  onViewportOffset(offset: { x: number; y: number; reframe: boolean }): void;
 }
 
 export class Hud {
@@ -232,7 +237,8 @@ export class Hud {
     this.layout.subscribe(() => this.#syncSheetMetrics());
     this.infocard.onVisibility = (on): void => {
       this.appEl.classList.toggle('has-card', on);
-      this.#syncSheetMetrics();
+      // reframe: false — the card is coverage, not a new stage. See onViewportOffset.
+      this.#syncSheetMetrics(false);
     };
     requestAnimationFrame(() => this.#syncSheetMetrics());
   }
@@ -328,7 +334,7 @@ export class Hud {
     return this.layout.state;
   }
 
-  #syncSheetMetrics(): void {
+  #syncSheetMetrics(reframe = true): void {
     const h = this.spawner.root.offsetHeight;
     this.appEl.style.setProperty('--dock-height', `${h}px`);
     this.appEl.style.setProperty('--infocard-bottom', `${h + 12}px`);
@@ -364,15 +370,15 @@ export class Hud {
       }
       const covered = split ? Math.max(h, this.labPanel.offsetHeight) : h;
       const card = cardOn && !split ? this.infocard.root.offsetHeight + 12 : 0;
-      this.cb.onViewportOffset({ x: 0, y: (covered + card) / 2 });
+      this.cb.onViewportOffset({ x: 0, y: (covered + card) / 2, reframe });
     } else if (layout === 'phone-landscape') {
       // The rail is on the right and the card sits against it, so together they cover
       // the right side; the free area's centre is half that coverage left of centre.
       const rail = this.spawner.root.offsetWidth;
       const card = cardOn ? this.infocard.root.offsetWidth + 12 : 0;
-      this.cb.onViewportOffset({ x: (rail + card) / 2, y: 0 });
+      this.cb.onViewportOffset({ x: (rail + card) / 2, y: 0, reframe });
     } else {
-      this.cb.onViewportOffset(base);
+      this.cb.onViewportOffset({ ...base, reframe });
     }
   }
 
@@ -462,29 +468,49 @@ export class Hud {
     this.labPanel.classList.remove('replaying');
   }
 
-  setLabControls(
-    groupLabel: string,
-    controls: readonly { label: string; onSelect(): void }[],
-  ): void {
+  setLabControls(groups: readonly LabControlGroup[]): void {
     this.#panelView?.dispose();
     this.#panelView = null;
+    for (const off of this.#labControlHints.splice(0)) off();
+    /*
+     * A chip that changes what it says about itself — the armed Weigh pan — republishes
+     * the whole row from inside its own click handler, which destroys the button that
+     * was just pressed. A mouse never notices; a keyboard drops to <body> and has to tab
+     * back in from the top. So the label under focus goes in, and comes back out.
+     */
+    const active = document.activeElement;
+    const refocus =
+      active instanceof HTMLElement && this.labPanel.contains(active) ? active.textContent : null;
+    let restore: HTMLElement | null = null;
+
     this.labPanel.replaceChildren();
-    if (controls.length === 0) return;
-    this.labPanel.append(
-      el(
-        'div.labpanel-inner',
-        {},
-        el('div.k', { text: groupLabel }),
-        el(
-          'div.lineup-buttons',
-          {},
-          ...controls.map((c) => button(c.label, c.onSelect, { class: 'chip action' })),
-        ),
-      ),
-    );
+    const rows = groups.filter((g) => g.controls.length > 0);
+    if (rows.length === 0) return;
+    const inner = el('div.labpanel-inner');
+    for (const group of rows) {
+      const row = el('div.lineup-buttons', { role: 'group', 'aria-label': group.label });
+      for (const c of group.controls) {
+        const b = button(c.label, c.onSelect, { class: 'chip action' });
+        // Defined at all means "this chip carries state"; undefined leaves it a plain
+        // button, which is what a line-up is.
+        if (c.selected !== undefined) b.setAttribute('aria-pressed', String(c.selected));
+        if (c.title) b.setAttribute('title', c.title);
+        if (refocus !== null && c.label === refocus) restore = b;
+        row.append(b);
+      }
+      inner.append(el('div.k', { text: group.label }), row);
+      // Four chips in a 195 px phone half scroll; say so (user, 2026-08-30).
+      this.#labControlHints.push(attachScrollHint(row));
+    }
+    this.labPanel.append(inner);
+    restore?.focus();
   }
 
+  /** Torn down with the row itself — each hint holds a listener and an observer. */
+  readonly #labControlHints: (() => void)[] = [];
+
   clearLabControls(): void {
+    for (const off of this.#labControlHints.splice(0)) off();
     this.labPanel.replaceChildren();
   }
 
@@ -497,6 +523,11 @@ export class Hud {
 
   dispose(): void {
     this.layout.dispose();
+    // Both hold live ResizeObservers now (scrollhint.ts), and a HUD that is thrown away
+    // without them is the same leak `App.dispose` exists to prevent (14 ENG-03).
+    for (const off of this.#labControlHints.splice(0)) off();
+    this.#panelView?.dispose();
+    this.#panelView = null;
     if (this.#toastTimer !== null) clearTimeout(this.#toastTimer);
   }
 }

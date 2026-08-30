@@ -146,7 +146,7 @@ export class App implements Stepper {
       onLabChange: (lab) => void this.#switchLab(lab),
       onHandMode: (mode) => this.hand.setMode(mode),
       onDeleteSelected: () => this.deleteSelected(),
-      onViewportOffset: (o) => this.rig.setViewportOffset(o.x, o.y),
+      onViewportOffset: (o) => this.rig.setViewportOffset(o.x, o.y, o.reframe),
     });
 
     // The tab follows the lab that actually mounted, not the one that was clicked: a
@@ -220,7 +220,7 @@ export class App implements Stepper {
         isPlaying: () => this.player.isPlaying,
       },
       ui: {
-        setControls: (label, controls) => this.hud.setLabControls(label, controls),
+        setControls: (groups) => this.hud.setLabControls(groups),
         mountPanel: (model) => this.hud.mountPanel(model),
         toast: (m) => this.hud.toast(m),
         share: () => this.share(),
@@ -381,7 +381,8 @@ export class App implements Stepper {
     // The active lab may prefer somewhere else — beside the instrument rather than in
     // the Sandbox tray. It only gets to ANSWER; spawning, the cap and the Hand all stay
     // here (15 §8.7).
-    const p = at ?? this.labs.preferredSpawnPoint() ?? this.#freeTraySlot(this.spec.sideM);
+    const p =
+      at ?? this.labs.preferredSpawnPoint(this.spec.sideM) ?? this.#freeTraySlot(this.spec.sideM);
     const before = this.entities.size;
     this.entities.spawn({ ...this.spec }, p);
     if (before >= config.limits.maxCubes) {

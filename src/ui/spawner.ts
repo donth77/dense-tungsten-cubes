@@ -2,6 +2,7 @@ import { astmClassLabel, METALS, WHA_PURITY_DEFAULT, whaDensity } from '../data/
 import { bindSlider } from './slider.ts';
 import { cubeSide, density, M_PER_IN, mass, percent } from '../data/format.ts';
 import { cubeMassKg } from '../data/metals.ts';
+import { attachScrollHint } from './scrollhint.ts';
 import { button, el, setText } from './dom.ts';
 import type { SettingsStore } from './settings.ts';
 import type { CubeSpec, MetalId } from '../types.ts';
@@ -196,6 +197,9 @@ export class Spawner {
       this.#chipButtons.set(p, btn);
       row.appendChild(btn);
     }
+    // Eight presets in a 227 px row: 3″ upward were simply off the edge (user,
+    // 2026-08-30). The row lives as long as the spawner does, so nothing unsubscribes.
+    attachScrollHint(row);
     return row;
   }
 

@@ -12,6 +12,9 @@ import type { Lab, LabContext, LabId } from '../../src/labs/lab.ts';
  * previous one.
  */
 
+/** A 2″ cube — the seam takes the size now, and nothing here depends on which. */
+const SIDE_M = 2 * 0.0254;
+
 function ctx(): LabContext {
   return {
     physics: {} as LabContext['physics'],
@@ -25,6 +28,7 @@ function ctx(): LabContext {
     layoutClass: () => 'desktop' as const,
     ui: {
       setControls: () => undefined,
+
       mountPanel: () => ({ update: () => undefined, dispose: () => undefined }),
       toast: () => undefined,
       share: () => undefined,
@@ -85,13 +89,13 @@ describe('LabManager phases', () => {
 
   it('answers the spawn seam from the active lab, and null with no lab', () => {
     const m = new LabManager(ctx(), () => Promise.resolve(fakeLab('weigh')));
-    expect(m.preferredSpawnPoint()).toBeNull();
+    expect(m.preferredSpawnPoint(SIDE_M)).toBeNull();
   });
 
   it('routes the spawn seam through the lab once one is active', async () => {
     const m = new LabManager(ctx(), () => Promise.resolve(fakeLab('weigh')));
     await m.switchTo('weigh');
-    expect(m.preferredSpawnPoint()).toEqual({ x: 1, y: 2, z: 3 });
+    expect(m.preferredSpawnPoint(SIDE_M)).toEqual({ x: 1, y: 2, z: 3 });
   });
 
   it('goes silent after teardown rather than dispatching into a dead lab', async () => {
@@ -170,6 +174,6 @@ describe('LabManager phases', () => {
       m.render(0.5);
       m.reset();
     }).not.toThrow();
-    expect(m.preferredSpawnPoint()).toBeNull();
+    expect(m.preferredSpawnPoint(SIDE_M)).toBeNull();
   });
 });

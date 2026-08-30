@@ -390,6 +390,25 @@ export class BalanceInstrument {
     return this.ctx.physics.transformOf(this.#pans[side]).p;
   }
 
+  /**
+   * Where a cube set down in this pan would rest: the dish's visible floor, in world
+   * space, at whatever height the beam is holding this side at right now.
+   *
+   * Off the LIVE pan body rather than off `pivotHeightM` — the pans are placed every
+   * step from the beam angle, so a loaded balance has one dish 60 mm below the other,
+   * and a spawn computed from the level pose would drop a cube into the low pan from a
+   * height (or into the high one from below it).
+   */
+  dishFloor(side: 0 | 1): Vec3 {
+    const p = this.panCentre(side);
+    return { x: p.x, y: p.y + B.panFloorM, z: p.z };
+  }
+
+  /** How much of the dish a cube may be laid across — inside the rim, not over it. */
+  get dishRadiusM(): number {
+    return B.panRimRadiusM;
+  }
+
   /** The measured load on each pan, N — what the beam is actually being asked to carry. */
   get panForceN(): readonly [number, number] {
     return this.#panForceN;

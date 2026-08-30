@@ -109,7 +109,25 @@ export interface LabContext {
 /** One button a lab wants offered. */
 export interface LabControl {
   label: string;
+  /**
+   * Rendered pressed when it is defined at all — a chip that carries state rather than
+   * only firing. The Weigh Station needs both readings: nothing on screen said which
+   * instrument was mounted, and its spawn side has to show which pan the SPAWN button
+   * is aimed at.
+   */
+  selected?: boolean;
+  /** The long form, for the tooltip and the screen reader, when the chip must stay short. */
+  title?: string;
   onSelect(): void;
+}
+
+/**
+ * A labelled row of them. A lab may offer more than one row: the Weigh Station picks an
+ * instrument on one and a pan on the next, and they are not the same question.
+ */
+export interface LabControlGroup {
+  label: string;
+  controls: readonly LabControl[];
 }
 
 /*
@@ -202,7 +220,7 @@ export interface LabPanelHandle {
  */
 export interface LabUi {
   /** @deprecated D3 moves every lab onto `mountPanel`; this survives until then. */
-  setControls(groupLabel: string, controls: readonly LabControl[]): void;
+  setControls(groups: readonly LabControlGroup[]): void;
   mountPanel(model: LabPanelModel): LabPanelHandle;
   toast(message: string): void;
   /** Copy a share link for the whole current scene (16 §12); the app assembles it. */
@@ -279,8 +297,12 @@ export interface Lab {
    * and the Hand. The Weigh Station answers with a spot beside the active instrument,
    * because a cube that lands in the Sandbox tray is a cube the player has to carry
    * across the stage before the lab can do anything with it.
+   *
+   * @param sideM how big the cube will be. A lab that packs cubes onto something —
+   * a pan, a platter, a carriage deck — cannot leave the right gap without it, and
+   * guessing 2″ is how a 15″ cube gets packed into its neighbour.
    */
-  preferredSpawnPoint?(): Vec3 | null;
+  preferredSpawnPoint?(sideM: number): Vec3 | null;
 }
 
 /**
@@ -348,7 +370,7 @@ export class LabManager {
     this.#active?.teardown();
     this.#active = null;
     this.#activeId = null;
-    this.ctx.ui.setControls('', []);
+    this.ctx.ui.setControls([]);
 
     lab.build(this.ctx);
     this.#active = lab;
@@ -384,8 +406,8 @@ export class LabManager {
     this.#active?.reset?.();
   }
 
-  preferredSpawnPoint(): Vec3 | null {
-    return this.#active?.preferredSpawnPoint?.() ?? null;
+  preferredSpawnPoint(sideM: number): Vec3 | null {
+    return this.#active?.preferredSpawnPoint?.(sideM) ?? null;
   }
 
   teardown(): void {

@@ -271,12 +271,11 @@ export class InputRouter {
         const ray = this.#pickRay(e.clientX, e.clientY);
         const hit = this.physics.raycast(ray.origin, ray.direction);
         const entity = hit ? this.entities.byBody(hit.handle) : undefined;
-        if (entity) {
-          this.bus.emit('select', { id: entity.id });
-          // 08 §8.5: gentle re-target onto it, and deliberately NO auto-orbit — the
-          // camera never changes angle without a hand on it.
-          this.rig.focusOn(entity.curr.p);
-        }
+        // Selecting moves NOTHING (user, 2026-08-30). 08 §8.5's "gentle re-target onto
+        // it" was here, and it never earned its keep: you can only tap a cube you can
+        // already see, so the re-target buys no visibility and just slides the stage —
+        // the instrument you were reading — off centre under your finger.
+        if (entity) this.bus.emit('select', { id: entity.id });
       }
       this.#queueHoverProbe(e.clientX, e.clientY);
       return;
