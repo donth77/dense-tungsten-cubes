@@ -276,17 +276,10 @@ describe('the Weigh Station puts cubes on the instrument', () => {
   });
 
   describe('the digital scale', () => {
-    it('keeps cubes off the platter until the auto-zero has happened', async () => {
+    it('takes the very first cube on the platter — no waiting for a zero', async () => {
       const rig = await rigWithStage();
       rig.press('Digital Scale');
-      expect(rig.lab.scale!.state.zeroed).toBe(false);
-
-      // Straight in, before the platter has settled: the bench takes it, or the scale
-      // would never zero and would sit at ZEROING… with a load on it, forever.
-      const early = rig.lab.preferredSpawnPoint(2 * IN)!;
-      expect(early.z).toBeGreaterThan(config.weigh.scale.housingHalfM.z);
-
-      rig.run(3);
+      // Not one step run yet: it arrives zeroed, so the platter is open for business.
       expect(rig.lab.scale!.state.zeroed).toBe(true);
 
       const p = rig.lab.preferredSpawnPoint(2 * IN)!;
@@ -295,10 +288,31 @@ describe('the Weigh Station puts cubes on the instrument', () => {
       expect(p.y - rig.lab.scale!.platterTopY).toBeCloseTo(IN + 0.004, 3);
     });
 
-    it('reads the cube it was handed, to the gram', async () => {
+    /*
+     * The regression this replaces: the platter used to refuse cubes until a MEASURED
+     * zero had happened, which needs a settled empty platter and takes 1.3 s — so the
+     * first cube, spawned at any human speed, landed on the bench instead (user,
+     * 2026-08-30). Spawning at step zero is the case that used to fail.
+     */
+    it('reads the cube it was handed, to the gram, spawned before it ever settled', async () => {
+      const rig = await rigWithStage();
+      rig.press('Digital Scale');
+      const e = rig.spawnFromDock(2);
+      expect(Math.hypot(e.curr.p.x, e.curr.p.z)).toBeLessThan(0.1);
+      rig.run(5);
+
+      const st = rig.lab.scale!.state;
+      expect(st.status).toBe('stable');
+      expect(st.stableMassKg!).toBeCloseTo(e.massKg, 2);
+      // And the seed is still standing in, because the platter never was empty.
+      expect(rig.lab.scale!.signal.measuredZero).toBe(false);
+    });
+
+    it('reads the same after the measured zero replaces the seed', async () => {
       const rig = await rigWithStage();
       rig.press('Digital Scale');
       rig.run(3);
+      expect(rig.lab.scale!.signal.measuredZero).toBe(true);
       const e = rig.spawnFromDock(2);
       rig.run(4);
 

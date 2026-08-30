@@ -125,6 +125,13 @@ export class ScaleInstrument {
     );
 
     this.#bodies.push(this.#housing, this.#platter);
+    /*
+     * Arrive zeroed. The empty cell carries the platter and nothing else, so the offset
+     * is known before a single step runs — see `ScaleSignal.seedZero` for why stating it
+     * is honest, and for the 1.3 s of unusable instrument that made it necessary.
+     */
+    this.signal.seedZero(S.platterKg * physics.gravityMps2);
+    this.#state = this.signal.state;
     this.#buildVisuals();
     this.ctx.scene.add(this.#group);
   }
@@ -183,10 +190,14 @@ export class ScaleInstrument {
      * AUTO-ZERO, once. The platter weighs 5 kg — a numerical necessity, see
      * config.weigh.scale.platterKg — and an unzeroed scale shows exactly that with nothing
      * on it. 15 §7.6: zero calibrates the empty instrument, only when it is stable and the
-     * measurement volume is empty; reset rebuilds the instrument, so it zeroes again. The
-     * LCD reads ZEROING… until this has happened.
+     * measurement volume is empty; reset rebuilds the instrument, so it zeroes again.
+     *
+     * The instrument does not WAIT for this any more (user, 2026-08-30): `build()` seeds
+     * the offset from the stated dead load, so the platter is usable from the first
+     * frame. This is the measurement replacing that seed, which is why the test is
+     * `measuredZero` and not `zeroed` — the latter is true from the start now.
      */
-    if (!this.#state.zeroed && this.signal.isStable && load.count === 0) {
+    if (!this.signal.measuredZero && this.signal.isStable && load.count === 0) {
       this.signal.zero(true);
       this.#state = this.signal.state;
     }

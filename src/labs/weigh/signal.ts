@@ -138,6 +138,8 @@ export class ScaleSignal {
   #emptyOffsetN = 0;
   #tareOffsetN = 0;
   #zeroed = false;
+  /** Whether the offset it is carrying came from a MEASUREMENT rather than the seed. */
+  #measuredZero = false;
   #stableForS = 0;
   #overForS = 0;
   #status: ScaleStatus = 'initializing';
@@ -253,8 +255,41 @@ export class ScaleSignal {
     this.#emptyOffsetN = this.#lp2.value;
     this.#tareOffsetN = 0;
     this.#zeroed = true;
+    this.#measuredZero = true;
     this.#resetDwell();
     return true;
+  }
+
+  /**
+   * The dead load, stated rather than measured, so the instrument arrives usable.
+   *
+   * `zero()` above cannot run until the cell has settled and its stability window has
+   * filled, which is 1.3 s of simulation — and for that second and a bit the platter was
+   * unusable, because a cube arriving before the zero does not delay it, it CANCELS it
+   * (the volume is never empty again). Measured: a spawn 1.0 s after switching to the
+   * scale still missed it, so in practice the FIRST cube never landed on the platter
+   * (user, 2026-08-30).
+   *
+   * Stating it is honest here, and only here, because the empty cell carries exactly one
+   * thing — the platter — and its mass is not an estimate: at equilibrium `k·x` equals
+   * `platterKg·g` by construction. Measured against the settled instrument it agrees to
+   * 0.001 N, a tenth of a gram, and `tests/physics/weigh-instruments.test.ts` pins that
+   * so the seed cannot quietly drift away from the thing it stands in for.
+   *
+   * It is still a stand-in. `#measuredZero` stays false, so the real zero replaces it
+   * the moment the platter is genuinely settled and empty.
+   */
+  seedZero(emptyLoadN: number): void {
+    this.#emptyOffsetN = emptyLoadN;
+    this.#tareOffsetN = 0;
+    this.#zeroed = true;
+    this.#measuredZero = false;
+    this.#resetDwell();
+  }
+
+  /** False while the offset is the seed above — the instrument still wants a real zero. */
+  get measuredZero(): boolean {
+    return this.#measuredZero;
   }
 
   /** Stores the current stable gross as the tare offset. Never changes capacity. */

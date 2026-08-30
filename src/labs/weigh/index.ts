@@ -289,18 +289,14 @@ export class WeighLab implements Lab {
     }
     if (this.#scale) {
       /*
-       * NOT until it has zeroed. The auto-zero fires once, and only on a platter that is
-       * both settled and EMPTY (15 §7.6) — the cell is carrying a 5 kg platter, so an
-       * unzeroed scale reads 5 kg with nothing on it. A cube that beats the zero onto the
-       * platter therefore does not just delay it, it cancels it: the load never leaves,
-       * the LCD sits at ZEROING… with a kilo of tungsten in front of it, and nothing on
-       * screen says why. Measured 1.3 s from mount, which is well inside the time it
-       * takes to switch to this instrument and press SPAWN.
-       *
-       * So for that second and a bit the bench takes them, exactly as it did before
-       * spawns landed on instruments at all.
+       * No wait, and no guard. The platter used to be off limits until the auto-zero had
+       * happened — that zero needs a settled EMPTY platter, so a cube arriving first does
+       * not delay it, it cancels it — but measured, that shut the platter for well over a
+       * second, and a spawn 1.0 s after switching instrument still missed it. In practice
+       * the FIRST cube never landed on the scale (user, 2026-08-30). The instrument now
+       * arrives already zeroed instead (`ScaleSignal.seedZero`), which fixes the cause
+       * rather than steering cubes around it.
        */
-      if (!this.#scale.state.zeroed) return null;
       return {
         centre: { x: 0, y: this.#scale.platterTopY, z: 0 },
         radiusM: config.weigh.scale.platterHalfM.x,

@@ -154,11 +154,46 @@ describe('the digital scale', () => {
     const rig = new Rig(pw);
     const scale = new ScaleInstrument(rig.ctx);
     scale.build();
-    expect(scale.state.zeroed).toBe(false);
-    rig.run(scale, 3); // nobody calls zero()
+    // Zeroed from the first frame — but by the SEED, not by a measurement.
     expect(scale.state.zeroed).toBe(true);
+    expect(scale.signal.measuredZero).toBe(false);
+
+    rig.run(scale, 3); // nobody calls zero()
+    expect(scale.signal.measuredZero).toBe(true);
     expect(scale.state.status).toBe('under-min');
     expect(Math.abs(scale.state.grossForceN)).toBeLessThan(0.1);
+    pw.free();
+  });
+
+  /**
+   * THE SEED IS ONLY HONEST WHILE THIS PASSES.
+   *
+   * `ScaleSignal.seedZero` states the empty dead load instead of waiting 1.3 s to
+   * measure it, which is what lets the first cube land on the platter at all (user,
+   * 2026-08-30). It is a stand-in for a measurement, so it has to equal one: at
+   * equilibrium the cell carries the platter and nothing else, and `k·x` is then
+   * `platterKg·g` by construction. If a change to the spring, the damper or the platter
+   * mass ever breaks that identity, the scale would read a few grams off from the moment
+   * it mounts until the platter next stood empty — silently, and only for the first
+   * weighing. This is the alarm for that.
+   */
+  it('seeds the same zero the instrument goes on to measure', async () => {
+    const pw = await PhysicsWorld.create();
+    pw.addStaticBox(
+      { x: 3, y: config.stage.floorThicknessM / 2, z: 3 },
+      { x: 0, y: -config.stage.floorThicknessM / 2, z: 0 },
+      'concrete',
+    );
+    const rig = new Rig(pw);
+    const scale = new ScaleInstrument(rig.ctx);
+    scale.build();
+    const seeded = scale.state.emptyOffsetN;
+    expect(seeded).toBeCloseTo(config.weigh.scale.platterKg * pw.gravityMps2, 6);
+
+    rig.run(scale, 3);
+    expect(scale.signal.measuredZero).toBe(true);
+    // A tenth of a gram is 0.001 N; a division is 10 g. Nothing near the display.
+    expect(Math.abs(scale.state.emptyOffsetN - seeded)).toBeLessThan(0.01);
     pw.free();
   });
 
